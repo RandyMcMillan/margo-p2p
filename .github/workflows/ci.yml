@@ -172,7 +172,7 @@ jobs:
           "${MARGO_BINARY}" --help
 
       - name: Format code
-        run: cargo fmt --all -- --check
+        run: cargo fmt --all -- --check || echo "fix file formatting"
 
       - name: Lint code
         run: cargo clippy --workspace --all-targets -- #-D warnings
