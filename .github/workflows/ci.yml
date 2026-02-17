@@ -84,6 +84,34 @@ jobs:
           name: binary-${{ matrix.rust }}
           path: target/debug/margo
 
+  build-p2p:
+    name: Build (p2p)
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        rust:
+          - 1.81 # MSRV
+          - stable
+          - nightly
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust }}
+
+      - name: Cache Rust
+        uses: ./.github/actions/cargo-cache
+        with:
+          key: build-p2p-${{ matrix.rust }}
+
+      - name: Build code (p2p only)
+        run: cargo build --no-default-features --features p2p
+
   check:
     name: Check
     runs-on: ubuntu-latest
@@ -137,8 +165,14 @@ jobs:
       - name: Lint code
         run: cargo clippy --workspace --all-targets -- -D warnings
 
+      - name: Lint code (all features)
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
       - name: Test binary
         run: cargo test
+
+      - name: Test binary (all features)
+        run: cargo test --all-features
 
       - name: Test conformance
         run: cd conformance && cargo run
@@ -154,3 +188,30 @@ jobs:
 
       - name: Test UI
         run: cd integration-tests && bundle exec rspec
+
+  check-p2p:
+    name: Check (p2p)
+    runs-on: ubuntu-latest
+
+    needs: build-p2p
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+          components: clippy
+
+      - name: Cache Rust
+        uses: ./.github/actions/cargo-cache
+        with:
+          key: check-p2p
+
+      - name: Lint code (p2p only)
+        run: cargo clippy --no-default-features --features p2p --all-targets -- -D warnings
+
+      - name: Test (p2p only)
+        run: cargo test --no-default-features --features p2p
