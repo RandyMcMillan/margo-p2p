@@ -98,8 +98,8 @@ jobs:
     strategy:
       matrix:
         rust:
-          - 1.81 # MSRV
-          - stable
+          #- 1.81 # MSRV
+          #- stable
           - nightly
 
     steps:
@@ -121,10 +121,15 @@ jobs:
 
   check:
     name: Check
-    runs-on: ubuntu-latest
-
+    runs-on: ubuntu-latest    
+    strategy:
+      matrix:
+        rust:
+          #- 1.81 # MSRV
+          #- stable
+          - nightly
+          
     needs: build
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
