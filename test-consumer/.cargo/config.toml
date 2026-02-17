@@ -1,0 +1,7 @@
+# Registry served by: python3 -m http.server 8000 --directory <registry-path>
+# Or any static HTTP server pointed at the margo registry output directory.
+#
+# Run ./run-test.sh from the test-consumer directory to set everything up.
+
+[registries]
+test-margo = { index = "sparse+http://127.0.0.1:8000/" }

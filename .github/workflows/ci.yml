@@ -104,6 +104,34 @@ jobs:
           name: binary-${{ matrix.rust }}
           path: target/debug/margo
 
+  build-p2p:
+    name: Build (p2p)
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        rust:
+          - 1.81 # MSRV
+          - stable
+          - nightly
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust }}
+
+      - name: Cache Rust
+        uses: ./.github/actions/cargo-cache
+        with:
+          key: build-p2p-${{ matrix.rust }}
+
+      - name: Build code (p2p only)
+        run: cargo build --no-default-features --features p2p
+
   check:
     name: Check
     runs-on: ubuntu-latest
@@ -157,8 +185,14 @@ jobs:
       - name: Lint code
         run: cargo clippy --workspace --all-targets -- -D warnings
 
+      - name: Lint code (all features)
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
       - name: Test binary
         run: cargo test
+
+      - name: Test binary (all features)
+        run: cargo test --all-features
 
       - name: Test conformance
         run: cd conformance && cargo run
@@ -174,3 +208,118 @@ jobs:
 
       - name: Test UI
         run: cd integration-tests && bundle exec rspec
+
+  check-p2p:
+    name: Check (p2p)
+    runs-on: ubuntu-latest
+
+    needs: build-p2p
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+          components: clippy
+
+      - name: Cache Rust
+        uses: ./.github/actions/cargo-cache
+        with:
+          key: check-p2p
+
+      - name: Lint code (p2p only)
+        run: cargo clippy --no-default-features --features p2p --all-targets -- -D warnings
+
+      - name: Test (p2p only)
+        run: cargo test --no-default-features --features p2p
+
+  integration-gnostr:
+    name: Integration (gnostr)
+    runs-on: ubuntu-latest
+
+    needs: build
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download margo binary
+        uses: actions/download-artifact@v4
+        with:
+          name: binary-stable
+          path: .
+
+      - name: Setup margo
+        run: |
+          chmod +x ./margo
+          MARGO="$(pwd)/margo"
+          echo "MARGO=${MARGO}" >> $GITHUB_ENV
+          "${MARGO}" --help
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+
+      - name: Clone gnostr
+        run: git clone --depth 1 https://github.com/gnostr-org/gnostr /tmp/gnostr
+
+      - name: Package gnostr
+        run: |
+          cd /tmp/gnostr
+          # Remove dev-only path dep that lacks a version field
+          sed -i '/test_utils.*path/d' Cargo.toml
+          cargo package --no-verify --allow-dirty
+
+      - name: Initialize test registry
+        run: |
+          "${MARGO}" init \
+            --defaults \
+            --base-url "http://127.0.0.1:8000/" \
+            /tmp/test-registry
+
+      - name: Add gnostr to registry
+        run: |
+          CRATE_FILE=$(find /tmp/gnostr/target/package -name '*.crate' -print -quit)
+          echo "Adding ${CRATE_FILE}"
+          "${MARGO}" add --registry /tmp/test-registry "${CRATE_FILE}"
+
+      - name: List registry contents
+        run: |
+          "${MARGO}" list --registry /tmp/test-registry
+
+      - name: Verify registry index
+        run: |
+          echo "=== config.json ==="
+          cat /tmp/test-registry/config.json
+          echo ""
+          echo "=== index entry ==="
+          find /tmp/test-registry -name gnostr -not -path '*/crates/*' -exec cat {} \;
+
+      - name: Start registry HTTP server
+        run: |
+          python3 -m http.server 8000 --directory /tmp/test-registry &
+          sleep 1
+          curl -sf http://127.0.0.1:8000/config.json
+
+      - name: Create test consumer project
+        run: |
+          cargo init /tmp/test-consumer
+          mkdir -p /tmp/test-consumer/.cargo
+          printf '[registries]\ntest-margo = { index = "sparse+http://127.0.0.1:8000/" }\n' \
+            > /tmp/test-consumer/.cargo/config.toml
+
+      - name: Add gnostr from test registry
+        run: |
+          cd /tmp/test-consumer
+          cargo add --registry test-margo gnostr
+
+      - name: Resolve dependencies
+        run: |
+          cd /tmp/test-consumer
+          cargo generate-lockfile
+          echo "=== Lock file snippet ==="
+          grep -A2 'name = "gnostr"' Cargo.lock

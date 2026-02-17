@@ -1,0 +1,8 @@
+[package]
+name = "test-consumer"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+gnostr = { version = "0.0", registry = "test-margo" }
