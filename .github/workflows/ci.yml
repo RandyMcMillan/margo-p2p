@@ -1,4 +1,4 @@
-name: Continuous integration
+name: margo-p2p
 on: [push, pull_request]
 
 jobs:
