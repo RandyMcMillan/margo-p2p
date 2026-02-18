@@ -234,7 +234,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: nightly
+          toolchain: ${{ matrix.rust }}
           components: clippy
 
       - name: Cache Rust
@@ -261,7 +261,8 @@ jobs:
       - name: Download margo binary
         uses: actions/download-artifact@v4
         with:
-          name: binary-nightly
+          name: binary-${{ matrix.rust }}
+
           path: .
 
       - name: Setup margo
@@ -274,7 +275,8 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: nightly
+          toolchain: ${{ matrix.rust }}
+
 
       - name: Clone gnostr
         run: git clone --depth 1 https://github.com/gnostr-org/gnostr /tmp/gnostr
