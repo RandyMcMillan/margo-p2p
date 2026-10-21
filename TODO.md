@@ -168,39 +168,51 @@ Resolve this before building further on Phase 1 item "apply fetched data".
       connecting to unrelated LAN peers. Either own that decision in the
       registry layout, or document it as a hard precondition.
 
-## Phase 5 — Pivot to kubo FFI (recommended)
+## Phase 5 — Pivot to kubo FFI (in progress)
 
 Replace the hand-rolled libp2p stack with the kubo FFI. This eliminates
 Phases 1–4 for the content-distribution and reachability concerns.
 
-- [ ] Add `kubo-ffi` as a dependency of `margo-p2p` (git dep on
-      `RandyMcMillan/kubo`, branch
-      `1843/972514/263127/a1a6dbad6/867d72303-begin-margo-p2p`, or a
-      vendored copy under `vendor/kubo/ffi`).
-- [ ] Implement `margo serve` on top of the FFI:
-  - `kubo_init_repo_networked` (or `init_repo_with_config`) for the repo.
+### Done
+
+- [x] Add `kubo-ffi` as a dependency of `margo-p2p` (vendored via path dep to
+      `kubo/ffi/rust`, added as workspace member).
+- [x] Implement `margo serve` on top of the FFI (`do_serve_ipfs`):
+  - `kubo_init_repo` / `kubo_init_repo_networked` for the repo.
   - `kubo_node_start` + `kubo_node_add_static("/", registry_dir)` before
     `kubo_node_start_gateway("/ip4/0.0.0.0/tcp/0")`.
-  - Publish each crate via `kubo_unixfs_add_bytes` and store the returned CID
-    in the index entry's `ipfs_cid` field (Cargo ignores unknown fields —
-    verified).
-  - Set `dl` to the gateway URL (or keep it as-is and let the server 302 to
-    `/ipfs/<cid>`).
-- [ ] Add `--peer` / `--bootstrap` to dial known peers via
-      `kubo_node_connect` (the FFI already supports dnsaddr multiaddrs).
-- [ ] Add `--identity` keyfile support (the FFI generates Ed25519 keys; persist
-      the repo so the PeerId is stable).
+  - Gateway serves `/ipfs/<cid>` (exact bytes, sha256-verified) and the
+    static registry (`/config.json`, `/de/mo/<crate>`).
+  - CoreAPI is NOT exposed on the gateway listener (verified 404).
+- [x] Add `--peer` to dial known peers via `kubo_node_connect` (repeatable).
+- [x] Add `--networked` switch for public-network repo config.
+- [x] `margo add --ipfs`: publishes crate to IPFS (pinned), stores CID in
+      index entry's `ipfs_cid` field.
+- [x] Add `ipfs_cid` field to `index_entry::Root` (Cargo ignores unknown
+      fields — verified).
+- [x] PeerId is stable across restarts (repo persists the keypair) — no
+      separate `--identity` flag needed.
+- [x] End-to-end verified: `margo add --ipfs` → CID stored; `margo serve`
+      → gateway serves crate bytes with matching sha256.
+
+### Remaining
+
+- [ ] Set `dl` to the gateway URL (or keep as-is and let the server 302 to
+      `/ipfs/<cid>`).
 - [ ] Re-implement registry sync on top of IPFS: publish the whole registry
-      dir to IPFS and an IPNS name; or simply let each node fetch missing
-      crates by CID from peers.
-- [ ] Verify received crate bytes against `cksum` (Cargo does this on
-      download; add an explicit check for the IPFS path).
+      dir to IPFS and an IPNS name; or let each node fetch missing crates by
+      CID from peers.
+- [ ] Verify received crate bytes against `cksum` on the consumer side when
+      fetching by CID (Cargo does this on download; add explicit check for
+      the IPFS path).
 - [ ] Honor `auth_required`: put the gateway behind an access-controlled proxy
       or run a private swarm.
 - [ ] Add a `p2p-integration` CI job that builds the FFI and runs a
       two-node smoke test.
 - [ ] Document the feature: `margo serve`, the protocol, the kubo dependency,
       the threat model.
+- [ ] Decide fate of the hand-rolled libp2p stack (`src/p2p.rs`): delete or
+      keep behind `--features p2p` for backward compat.
 
 ## Housekeeping
 
