@@ -199,22 +199,22 @@ Phases 1–4 for the content-distribution and reachability concerns.
 
 ### Remaining
 
+- [x] Document the feature: README now has a "Peer-to-peer distribution"
+      section covering `margo serve`, `margo add --ipfs`, `margo verify`,
+      `--networked`, and the kubo dependency.
+- [x] Decide fate of the hand-rolled libp2p stack: deprecated via module doc
+      comment in `src/p2p.rs`; kept behind `--features p2p` for backward
+      compat. Removal deferred.
 - [ ] Set `dl` to the gateway URL (or keep as-is and let the server 302 to
-      `/ipfs/<cid>`).
+      `/ipfs/<cid>`). Currently `dl` points at static files; IPFS is used
+      for P2P distribution via `ipfs_cid`.
 - [ ] Re-implement registry sync on top of IPFS: publish the whole registry
       dir to IPFS and an IPNS name; or let each node fetch missing crates by
       CID from peers.
-- [ ] Verify received crate bytes against `cksum` on the consumer side when
-      fetching by CID (Cargo does this on download; add explicit check for
-      the IPFS path).
 - [ ] Honor `auth_required`: put the gateway behind an access-controlled proxy
       or run a private swarm.
 - [ ] Add a `p2p-integration` CI job that builds the FFI and runs a
       two-node smoke test.
-- [ ] Document the feature: `margo serve`, the protocol, the kubo dependency,
-      the threat model.
-- [ ] Decide fate of the hand-rolled libp2p stack (`src/p2p.rs`): delete or
-      keep behind `--features p2p` for backward compat.
 
 ## Housekeeping
 
