@@ -36,6 +36,7 @@ enum Subcommand {
     Remove(RemoveArgs),
     Yank(YankArgs),
     List(ListArgs),
+    Verify(VerifyArgs),
     GenerateHtml(GenerateHtmlArgs),
     #[cfg(all(feature = "p2p", not(feature = "ipfs")))]
     Serve(ServeArgs),
@@ -187,6 +188,16 @@ struct ListArgs {
     registry: Option<PathBuf>,
 }
 
+/// Verify that every crate file in the registry matches its index entry's cksum
+#[derive(Debug, argh::FromArgs)]
+#[argh(subcommand)]
+#[argh(name = "verify")]
+struct VerifyArgs {
+    /// path to the registry to verify
+    #[argh(option)]
+    registry: Option<PathBuf>,
+}
+
 #[snafu::report]
 fn main() -> Result<(), Error> {
     let args: Args = argh::from_env();
@@ -200,6 +211,7 @@ fn main() -> Result<(), Error> {
         Subcommand::Remove(rm) => do_remove(global, rm)?,
         Subcommand::Yank(yank) => do_yank(global, yank)?,
         Subcommand::List(list) => do_list(global, list)?,
+        Subcommand::Verify(verify) => do_verify(global, verify)?,
         Subcommand::GenerateHtml(html) => do_generate_html(global, html)?,
         #[cfg(all(feature = "p2p", not(feature = "ipfs")))]
         Subcommand::Serve(serve) => do_serve(global, serve)?,
@@ -267,6 +279,12 @@ enum Error {
     IpfsServe {
         #[snafu(source(from(IpfsServeError, Box::new)))]
         source: Box<IpfsServeError>,
+    },
+
+    #[snafu(transparent)]
+    Verify {
+        #[snafu(source(from(VerifyError, Box::new)))]
+        source: Box<VerifyError>,
     },
 }
 
@@ -434,6 +452,76 @@ fn do_yank(_global: &Global, yank: YankArgs) -> Result<(), Error> {
     r.maybe_generate_html()?;
 
     Ok(())
+}
+
+fn do_verify(_global: &Global, verify: VerifyArgs) -> Result<(), Error> {
+    let r = discover_registry(verify.registry)?;
+    let crates = r.list_all().unwrap();
+
+    let mut ok_count = 0usize;
+    let mut fail_count = 0usize;
+    for (name, versions) in &crates {
+        for (version, entry) in versions {
+            let path = r.crate_file_path_for(name, version);
+            if !path.exists() {
+                println!("MISSING  {} {}", name, version);
+                fail_count += 1;
+                continue;
+            }
+            let bytes = std::fs::read(&path).unwrap_or_default();
+            use sha2::Digest;
+            let actual = hex::encode(sha2::Sha256::digest(&bytes));
+            match entry.cksum.as_str() {
+                expected if expected == actual => {
+                    println!("OK       {} {} {}", name, version, &actual[..12]);
+                    ok_count += 1;
+                }
+                expected => {
+                    println!(
+                        "MISMATCH {} {} expected={} actual={}",
+                        name, version, expected, actual
+                    );
+                    fail_count += 1;
+                }
+            }
+
+            #[cfg(feature = "ipfs")]
+            if let Some(cid) = &entry.ipfs_cid {
+                // Best-effort: try to fetch from IPFS via the local repo if present.
+                let repo_path = r.path.join(".ipfs-repo");
+                if repo_path.exists() {
+                    if let Ok(node) = kubo_ffi::Node::start(&repo_path.to_string_lossy(), true) {
+                        if let Ok(fetched) = node.unixfs_cat(cid) {
+                            let fetched_hash = hex::encode(sha2::Sha256::digest(&fetched));
+                            if fetched_hash == actual {
+                                println!("         IPFS ok  {} (cid={})", name, cid);
+                            } else {
+                                println!(
+                                    "         IPFS MISMATCH {} cid={} (expected cksum {}, got {})",
+                                    name, cid, actual, fetched_hash
+                                );
+                                fail_count += 1;
+                            }
+                        }
+                        // node dropped
+                    }
+                }
+            }
+        }
+    }
+
+    println!();
+    println!("{} ok, {} failed", ok_count, fail_count);
+    if fail_count > 0 {
+        return Err(VerifyError::Failed { count: fail_count }.into());
+    }
+    Ok(())
+}
+
+#[derive(Debug, Snafu)]
+enum VerifyError {
+    #[snafu(display("{} crate(s) failed verification", count))]
+    Failed { count: usize },
 }
 
 fn do_list(_global: &Global, list: ListArgs) -> Result<(), Error> {
