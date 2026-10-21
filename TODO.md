@@ -196,6 +196,8 @@ Phases 1–4 for the content-distribution and reachability concerns.
       and (when the repo exists) round-trips through IPFS.
 - [x] End-to-end verified: `margo add --ipfs` → CID stored; `margo serve`
       → gateway serves crate bytes with matching sha256.
+- [x] Integration test `ipfs_publish_and_verify` (with `--nocapture` output)
+      exercises the full publish → CID → IPFS round-trip → cksum path.
 
 ### Remaining
 
