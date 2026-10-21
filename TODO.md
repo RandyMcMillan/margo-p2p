@@ -192,6 +192,8 @@ Phases 1–4 for the content-distribution and reachability concerns.
       fields — verified).
 - [x] PeerId is stable across restarts (repo persists the keypair) — no
       separate `--identity` flag needed.
+- [x] `margo verify`: checks every crate's on-disk bytes against `cksum`,
+      and (when the repo exists) round-trips through IPFS.
 - [x] End-to-end verified: `margo add --ipfs` → CID stored; `margo serve`
       → gateway serves crate bytes with matching sha256.
 
