@@ -2086,4 +2086,64 @@ mod test {
             crate_path.display(),
         );
     }
+
+    #[cfg(feature = "ipfs")]
+    #[tokio::test]
+    async fn ipfs_publish_and_verify() {
+        println!("=== IPFS publish + verify test ===");
+        let global = Global::new().unwrap();
+        let scratch = ScratchSpace::new().await.unwrap();
+
+        let config = default_config();
+        let r = Registry::initialize(config, scratch.registry()).unwrap();
+
+        let c = Crate::new("ipfs-crate", "1.0.0")
+            .lib_rs(r#"pub const ID: u8 = 42;"#)
+            .create_in(&scratch)
+            .await
+            .unwrap();
+        let p = c.package().await.unwrap();
+
+        println!("adding crate with --ipfs (publish to IPFS)...");
+        r.add(&global, &p, true).unwrap();
+        println!("add done");
+
+        let name = CrateName::try_from(c.name()).unwrap();
+        let index_file_path = r.index_file_path_for(&name);
+        let index_contents = std::fs::read_to_string(&index_file_path).unwrap();
+        println!("index entry: {}", index_contents.trim());
+
+        let parsed: serde_json::Value = serde_json::from_str(index_contents.trim()).unwrap();
+        let cid = parsed
+            .get("ipfs_cid")
+            .and_then(|v| v.as_str())
+            .expect("ipfs_cid must be present");
+        println!("ipfs_cid = {}", cid);
+        assert!(!cid.is_empty());
+        assert!(cid.starts_with("Qm") || cid.starts_with("baf"));
+
+        // verify cksum matches
+        let version: semver::Version = "1.0.0".parse().unwrap();
+        let crate_path = r.crate_file_path_for(&name, &version);
+        let bytes = std::fs::read(&crate_path).unwrap();
+        use sha2::Digest;
+        let actual = hex::encode(sha2::Sha256::digest(&bytes));
+        assert_eq!(parsed["cksum"].as_str().unwrap(), actual);
+        println!("cksum verified: {}", &actual[..12]);
+
+        // round-trip through IPFS
+        let repo_path = r.path.join(".ipfs-repo");
+        assert!(repo_path.exists(), "ipfs repo must exist");
+        let node = kubo_ffi::Node::start(&repo_path.to_string_lossy(), true).unwrap();
+        let fetched = node.unixfs_cat(cid).expect("unixfs_cat must succeed");
+        assert_eq!(fetched, bytes, "IPFS round-trip bytes must match");
+        let fetched_hash = hex::encode(sha2::Sha256::digest(&fetched));
+        assert_eq!(fetched_hash, actual);
+        println!(
+            "IPFS round-trip OK: {} bytes, sha256={}",
+            fetched.len(),
+            &fetched_hash[..12]
+        );
+        println!("=== IPFS publish + verify test PASSED ===");
+    }
 }
