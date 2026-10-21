@@ -659,6 +659,8 @@ fn do_serve_ipfs(_global: &Global, serve: ServeArgs) -> Result<(), Error> {
         }
         .into());
     }
+    // register crate redirect: /crates/... -> /ipfs/<cid> when available
+    node.add_crate_redirect(&r.path.to_string_lossy());
 
     // 4. dial peers
     for peer in &serve.peer {

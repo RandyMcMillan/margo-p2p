@@ -207,10 +207,12 @@ Phases 1–4 for the content-distribution and reachability concerns.
 - [x] Decide fate of the hand-rolled libp2p stack: deprecated via module doc
       comment in `src/p2p.rs`; kept behind `--features p2p` for backward
       compat. Removal deferred.
-- [x] Set `dl` to the gateway URL: decided to keep `dl` pointing at static
-      files (the static-file ethos). IPFS CIDs (`ipfs_cid`) enable P2P
-      distribution; `margo serve --publish` exposes the whole registry via
-      IPFS/IPNS for peer-to-peer sync.
+- [x] Set `dl` to the gateway URL: `margo serve` now 302-redirects
+      `/crates/{prefix}/{crate}/{version}.crate` to `/ipfs/<cid>` when the
+      index entry has an `ipfs_cid` (via `kubo_node_add_crate_redirect`).
+      Cargo follows the redirect and verifies `cksum`. `dl` can stay as the
+      static file URL for backward compat; the redirect makes IPFS the
+      preferred path when available.
 - [x] Re-implement registry sync on top of IPFS: `margo serve --publish`
       publishes the whole registry dir to IPFS (root CID) and an IPNS name
       (`k51qzi5uqu5d...`). Peers can fetch the registry snapshot by CID or
