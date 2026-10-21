@@ -18,6 +18,9 @@ mod html;
 #[cfg(feature = "p2p")]
 mod p2p;
 
+#[cfg(feature = "ipfs")]
+use kubo_ffi as _;
+
 #[derive(Debug, argh::FromArgs)]
 /// Manage a static crate registry
 struct Args {
@@ -34,7 +37,9 @@ enum Subcommand {
     Yank(YankArgs),
     List(ListArgs),
     GenerateHtml(GenerateHtmlArgs),
-    #[cfg(feature = "p2p")]
+    #[cfg(all(feature = "p2p", not(feature = "ipfs")))]
+    Serve(ServeArgs),
+    #[cfg(feature = "ipfs")]
     Serve(ServeArgs),
 }
 
@@ -76,6 +81,11 @@ struct AddArgs {
     #[argh(option)]
     registry: Option<PathBuf>,
 
+    /// publish the crate to IPFS and record its CID in the index entry
+    #[cfg(feature = "ipfs")]
+    #[argh(switch)]
+    ipfs: bool,
+
     #[argh(positional)]
     path: Vec<PathBuf>,
 }
@@ -109,7 +119,7 @@ struct GenerateHtmlArgs {
 }
 
 /// Start a libp2p P2P node for the registry
-#[cfg(feature = "p2p")]
+#[cfg(all(feature = "p2p", not(feature = "ipfs")))]
 #[derive(Debug, argh::FromArgs)]
 #[argh(subcommand)]
 #[argh(name = "serve")]
@@ -121,6 +131,28 @@ struct ServeArgs {
     /// multiaddr to listen on (default: /ip4/0.0.0.0/tcp/0)
     #[argh(option)]
     listen: Option<String>,
+}
+
+#[cfg(feature = "ipfs")]
+#[derive(Debug, argh::FromArgs)]
+#[argh(subcommand)]
+#[argh(name = "serve")]
+struct ServeArgs {
+    /// path to the registry to serve
+    #[argh(option)]
+    registry: Option<PathBuf>,
+
+    /// multiaddr to listen on (default: /ip4/0.0.0.0/tcp/0)
+    #[argh(option)]
+    listen: Option<String>,
+
+    /// peer multiaddr to dial on startup (repeatable)
+    #[argh(option)]
+    peer: Vec<String>,
+
+    /// use a networked (public) repo config instead of isolated
+    #[argh(switch)]
+    networked: bool,
 }
 
 /// Yank a version of a crate from the registry
@@ -169,8 +201,10 @@ fn main() -> Result<(), Error> {
         Subcommand::Yank(yank) => do_yank(global, yank)?,
         Subcommand::List(list) => do_list(global, list)?,
         Subcommand::GenerateHtml(html) => do_generate_html(global, html)?,
-        #[cfg(feature = "p2p")]
+        #[cfg(all(feature = "p2p", not(feature = "ipfs")))]
         Subcommand::Serve(serve) => do_serve(global, serve)?,
+        #[cfg(feature = "ipfs")]
+        Subcommand::Serve(serve) => do_serve_ipfs(global, serve)?,
     }
 
     Ok(())
@@ -226,6 +260,13 @@ enum Error {
     Serve {
         #[snafu(source(from(ServeError, Box::new)))]
         source: Box<ServeError>,
+    },
+
+    #[cfg(feature = "ipfs")]
+    #[snafu(transparent)]
+    IpfsServe {
+        #[snafu(source(from(IpfsServeError, Box::new)))]
+        source: Box<IpfsServeError>,
     },
 }
 
@@ -358,8 +399,13 @@ enum DoInitializeError {
 fn do_add(global: &Global, add: AddArgs) -> Result<(), Error> {
     let r = discover_registry(add.registry)?;
 
+    #[cfg(feature = "ipfs")]
+    let publish_ipfs = add.ipfs;
+    #[cfg(not(feature = "ipfs"))]
+    let publish_ipfs = false;
+
     for i in add.path {
-        r.add(global, i)?;
+        r.add(global, i, publish_ipfs)?;
     }
     r.maybe_generate_html()?;
 
@@ -445,13 +491,10 @@ fn do_serve(_global: &Global, serve: ServeArgs) -> Result<(), Error> {
     let default_addr = "/ip4/0.0.0.0/tcp/0";
     let addr_str = serve.listen.as_deref().unwrap_or(default_addr);
 
-    let listen_addr: Multiaddr =
-        addr_str
-            .parse()
-            .map_err(|e| ServeError::ParseListenAddr {
-                source: e,
-                addr: addr_str.to_owned(),
-            })?;
+    let listen_addr: Multiaddr = addr_str.parse().map_err(|e| ServeError::ParseListenAddr {
+        source: e,
+        addr: addr_str.to_owned(),
+    })?;
 
     let rt = tokio::runtime::Runtime::new().map_err(|source| ServeError::Runtime { source })?;
 
@@ -478,6 +521,87 @@ enum ServeError {
 
     #[snafu(transparent)]
     P2p { source: p2p::P2pError },
+}
+
+#[cfg(feature = "ipfs")]
+fn do_serve_ipfs(_global: &Global, serve: ServeArgs) -> Result<(), Error> {
+    use kubo_ffi::Node;
+
+    let r = discover_registry(serve.registry)?;
+
+    // 1. init repo (reuse .ipfs-repo if it exists from `margo add --ipfs`)
+    let repo_path = r.path.join(".ipfs-repo");
+    if !repo_path.exists() {
+        if serve.networked {
+            kubo_ffi::init_repo_networked(&repo_path.to_string_lossy())
+                .map_err(|e| IpfsServeError::Init { reason: e })?;
+        } else {
+            kubo_ffi::init_repo(&repo_path.to_string_lossy())
+                .map_err(|e| IpfsServeError::Init { reason: e })?;
+        }
+    }
+
+    // 2. start node
+    let node = Node::start(&repo_path.to_string_lossy(), true)
+        .map_err(|e| IpfsServeError::NodeStart { reason: e })?;
+
+    // 3. register static registry dir BEFORE starting the gateway
+    if !node.add_static("/", &r.path.to_string_lossy()) {
+        return Err(IpfsServeError::Static {
+            reason: kubo_ffi::last_error().unwrap_or_else(|| "add_static failed".into()),
+        }
+        .into());
+    }
+
+    // 4. dial peers
+    for peer in &serve.peer {
+        if !node.connect(peer) {
+            eprintln!(
+                "warning: failed to connect to {}: {}",
+                peer,
+                kubo_ffi::last_error().unwrap_or_default()
+            );
+        } else {
+            println!("connected to {}", peer);
+        }
+    }
+
+    // 5. start gateway (public-safe)
+    let default_addr = "/ip4/0.0.0.0/tcp/0";
+    let addr_str = serve.listen.as_deref().unwrap_or(default_addr);
+    let gw = node
+        .start_gateway(addr_str)
+        .ok_or_else(|| IpfsServeError::Gateway {
+            reason: kubo_ffi::last_error().unwrap_or_else(|| "start_gateway failed".into()),
+        })?;
+
+    // convert multiaddr to a printable http url
+    let port = gw.split("/tcp/").nth(1).unwrap_or("0");
+    println!("margo ipfs registry serving on http://0.0.0.0:{}", port);
+    println!("  gateway:  http://0.0.0.0:{}/ipfs/<cid>", port);
+    println!("  registry: http://0.0.0.0:{}/config.json", port);
+    println!("  peer id:  {}", node.peer_id().unwrap_or_default());
+
+    // 6. block forever (Ctrl-C to exit)
+    loop {
+        std::thread::sleep(std::time::Duration::from_secs(3600));
+    }
+}
+
+#[cfg(feature = "ipfs")]
+#[derive(Debug, Snafu)]
+enum IpfsServeError {
+    #[snafu(display("Could not initialize kubo repo: {reason}"))]
+    Init { reason: String },
+
+    #[snafu(display("Could not start kubo node: {reason}"))]
+    NodeStart { reason: String },
+
+    #[snafu(display("Could not register static dir: {reason}"))]
+    Static { reason: String },
+
+    #[snafu(display("Could not start gateway: {reason}"))]
+    Gateway { reason: String },
 }
 
 fn discover_registry(path: Option<PathBuf>) -> Result<Registry, DiscoverRegistryError> {
@@ -584,7 +708,13 @@ impl Registry {
         Ok(Self { path, config })
     }
 
-    fn add(&self, global: &Global, crate_path: impl AsRef<Path>) -> Result<(), AddError> {
+    #[cfg_attr(not(feature = "ipfs"), allow(unused_variables))]
+    fn add(
+        &self,
+        global: &Global,
+        crate_path: impl AsRef<Path>,
+        publish_ipfs: bool,
+    ) -> Result<(), AddError> {
         use add_error::*;
 
         let crate_path = crate_path.as_ref();
@@ -602,8 +732,26 @@ impl Registry {
         let cargo_toml = String::from_utf8(cargo_toml).context(CargoTomlUtf8Snafu)?;
         let cargo_toml = toml::from_str(&cargo_toml).context(CargoTomlMalformedSnafu)?;
 
-        let index_entry =
+        #[cfg_attr(not(feature = "ipfs"), allow(unused_mut))]
+        let mut index_entry =
             adapt_cargo_toml_to_index_entry(global, &self.config, cargo_toml, checksum_hex);
+
+        #[cfg(feature = "ipfs")]
+        if publish_ipfs {
+            let repo_path = self.path.join(".ipfs-repo");
+            if !repo_path.exists() {
+                kubo_ffi::init_repo_networked(&repo_path.to_string_lossy())
+                    .map_err(|e| AddError::Ipfs { reason: e })?;
+            }
+            let node = kubo_ffi::Node::start(&repo_path.to_string_lossy(), true)
+                .map_err(|e| AddError::Ipfs { reason: e })?;
+            let cid = node
+                .unixfs_add_bytes(&crate_file)
+                .map_err(|e| AddError::Ipfs { reason: e })?;
+            println!("Published to IPFS: {}", cid);
+            index_entry.ipfs_cid = Some(cid);
+            // node dropped here; repo + pin persist on disk
+        }
 
         let index_path = self.index_file_path_for(&index_entry.name);
         if let Some(path) = index_path.parent() {
@@ -901,6 +1049,10 @@ enum AddError {
 
     #[snafu(display("Could not write the crate {}", path.display()))]
     CrateWrite { source: io::Error, path: PathBuf },
+
+    #[cfg(feature = "ipfs")]
+    #[snafu(display("IPFS publish failed: {reason}"))]
+    Ipfs { reason: String },
 }
 
 #[derive(Debug, Snafu)]
@@ -1154,6 +1306,7 @@ fn adapt_cargo_toml_to_index_entry(
         v: 2,
         features2: Default::default(),
         rust_version: cargo_toml.package.rust_version,
+        ipfs_cid: None,
     }
 }
 
@@ -1459,6 +1612,15 @@ mod index_entry {
         /// This must be a valid version requirement without an operator (e.g. no `=`)
         #[serde(skip_serializing_if = "Option::is_none")]
         pub rust_version: Option<RustVersion>,
+
+        /// Optional IPFS CID of the `.crate` file, for peer-to-peer distribution.
+        ///
+        /// Cargo ignores unknown index-entry fields, so this is safe to add.
+        /// When present, `margo serve` (ipfs feature) can resolve the crate
+        /// through the IPFS gateway instead of (or in addition to) the static
+        /// `dl` URL.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub ipfs_cid: Option<String>,
     }
 
     #[derive(Debug, Serialize, Deserialize)]
@@ -1763,8 +1925,8 @@ mod test {
             .unwrap();
         let p = c.package().await.unwrap();
 
-        r.add(&global, &p).unwrap();
-        r.add(&global, &p).unwrap();
+        r.add(&global, &p, false).unwrap();
+        r.add(&global, &p, false).unwrap();
 
         let name = CrateName::try_from(c.name()).unwrap();
         let index_file_path = r.index_file_path_for(&name);
@@ -1820,7 +1982,7 @@ mod test {
         let version = version.parse().unwrap();
         let crate_path = r.crate_file_path_for(&name, &version);
 
-        r.add(&global, p).unwrap();
+        r.add(&global, p, false).unwrap();
 
         assert!(
             crate_path.exists(),

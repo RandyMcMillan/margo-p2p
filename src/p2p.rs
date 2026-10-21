@@ -1,3 +1,4 @@
+use libp2p::futures::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use libp2p::{
     futures::StreamExt,
     gossipsub, identify, mdns,
@@ -7,7 +8,6 @@ use libp2p::{
     swarm::{NetworkBehaviour, SwarmEvent},
     tcp, yamux, Multiaddr, PeerId, StreamProtocol, SwarmBuilder,
 };
-use libp2p::futures::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use snafu::prelude::*;
 use std::{
     collections::HashMap,
@@ -186,8 +186,8 @@ impl Codec for CommitCodec {
     where
         T: AsyncWrite + Unpin + Send,
     {
-        let data = serde_json::to_vec(&resp)
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        let data =
+            serde_json::to_vec(&resp).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
         io.write_all(&(data.len() as u32).to_be_bytes()).await?;
         io.write_all(&data).await?;
         Ok(())
@@ -224,10 +224,7 @@ struct Behaviour {
 /// 1. Detect the current git commit hash of the registry.
 /// 2. Broadcast it via gossipsub whenever a new peer subscribes.
 /// 3. Answer `GetHead` / `GetCommitData` requests from peers.
-pub async fn start_node(
-    listen_addr: Multiaddr,
-    registry_path: PathBuf,
-) -> Result<(), P2pError> {
+pub async fn start_node(listen_addr: Multiaddr, registry_path: PathBuf) -> Result<(), P2pError> {
     use p2p_error::*;
 
     let head_commit = detect_git_commit(&registry_path);
@@ -310,9 +307,7 @@ pub async fn start_node(
         match swarm.select_next_some().await {
             // -- listen addresses -------------------------------------------
             SwarmEvent::NewListenAddr { address, .. } => {
-                let full_addr = address
-                    .clone()
-                    .with(Protocol::P2p(*swarm.local_peer_id()));
+                let full_addr = address.clone().with(Protocol::P2p(*swarm.local_peer_id()));
                 println!("Listening on {full_addr}");
             }
 
@@ -320,10 +315,7 @@ pub async fn start_node(
             SwarmEvent::Behaviour(BehaviourEvent::Mdns(mdns::Event::Discovered(peers))) => {
                 for (peer_id, addr) in peers {
                     println!("mDNS discovered peer: {peer_id} at {addr}");
-                    swarm
-                        .behaviour_mut()
-                        .gossipsub
-                        .add_explicit_peer(&peer_id);
+                    swarm.behaviour_mut().gossipsub.add_explicit_peer(&peer_id);
                     swarm.dial(addr).ok();
                 }
             }
@@ -366,15 +358,14 @@ pub async fn start_node(
                 ..
             })) => {
                 if let Ok(commit) = String::from_utf8(message.data.clone()) {
-                    println!(
-                        "Received commit announcement from {propagation_source}: {commit}"
-                    );
+                    println!("Received commit announcement from {propagation_source}: {commit}");
                 }
             }
 
-            SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(
-                gossipsub::Event::Subscribed { peer_id, topic: t },
-            )) => {
+            SwarmEvent::Behaviour(BehaviourEvent::Gossipsub(gossipsub::Event::Subscribed {
+                peer_id,
+                topic: t,
+            })) => {
                 println!("Peer {peer_id} subscribed to {t}");
             }
 
@@ -400,27 +391,22 @@ pub async fn start_node(
             SwarmEvent::Behaviour(BehaviourEvent::CommitRpc(
                 request_response::Event::Message {
                     peer,
-                    message:
-                        request_response::Message::Response {
-                            response, ..
-                        },
+                    message: request_response::Message::Response { response, .. },
                 },
-            )) => {
-                match &response {
-                    CommitResponse::Head { commit } => {
-                        println!("Peer {peer} HEAD: {commit:?}");
-                    }
-                    CommitResponse::CommitData { commit, files } => {
-                        println!(
-                            "Received commit data for {commit} from {peer} ({} files)",
-                            files.len()
-                        );
-                    }
-                    CommitResponse::Error { message } => {
-                        println!("Peer {peer} error: {message}");
-                    }
+            )) => match &response {
+                CommitResponse::Head { commit } => {
+                    println!("Peer {peer} HEAD: {commit:?}");
                 }
-            }
+                CommitResponse::CommitData { commit, files } => {
+                    println!(
+                        "Received commit data for {commit} from {peer} ({} files)",
+                        files.len()
+                    );
+                }
+                CommitResponse::Error { message } => {
+                    println!("Peer {peer} error: {message}");
+                }
+            },
 
             // -- connections ------------------------------------------------
             SwarmEvent::ConnectionEstablished { peer_id, .. } => {
@@ -512,5 +498,7 @@ pub enum P2pError {
     },
 
     #[snafu(display("Could not subscribe to gossipsub topic"))]
-    GossipsubSubscribe { source: gossipsub::SubscriptionError },
+    GossipsubSubscribe {
+        source: gossipsub::SubscriptionError,
+    },
 }
