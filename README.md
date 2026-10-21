@@ -53,6 +53,54 @@ Your next step is to serve those files from
 `https://my-registry.example.com` instead, in whatever way you
 serve static files from whatever URL you've specified.
 
+### Peer-to-peer distribution (optional)
+
+Margo can optionally publish crates to [IPFS][ipfs] and serve the registry
+over an embedded IPFS node, so crates can be fetched peer-to-peer in addition
+to (or instead of) the static HTTP files. This is enabled by the `ipfs`
+feature, which is on by default.
+
+[ipfs]: https://ipfs.tech
+
+```bash
+# Publish a crate to IPFS while adding it to the registry
+margo add --registry my-registry-directory --ipfs some-crate/target/package/some-crate-1.2.3.crate
+
+# Serve the registry over HTTP + IPFS gateway
+margo serve --registry my-registry-directory
+```
+
+`margo serve` (ipfs) does three things:
+
+- serves the static registry files (`config.json`, index entries) over HTTP,
+- serves an IPFS gateway at `/ipfs/<cid>` for crate bytes, and
+- dials peers given via repeated `--peer <multiaddr>`.
+
+Crates published with `--ipfs` get an `ipfs_cid` field in their index entry
+(Cargo ignores unknown fields). The crate's `cksum` is still verified by Cargo
+on download, so integrity is enforced end-to-end.
+
+```bash
+# Verify every crate file against its recorded cksum (and IPFS, if present)
+margo verify --registry my-registry-directory
+```
+
+For public-network participation, use `--networked` (enables mDNS, QUIC,
+relay, AutoTLS and Kubo's default bootstrap peers):
+
+```bash
+margo serve --registry my-registry-directory --networked
+```
+
+The `ipfs` feature depends on a vendored copy of the [Kubo][kubo] FFI
+(`kubo/ffi`), which requires a Go toolchain to build. To build without it:
+
+```bash
+cargo build --no-default-features --features "html"
+```
+
+[kubo]: https://github.com/ipfs/kubo
+
 ### Configure Cargo
 
 ```bash

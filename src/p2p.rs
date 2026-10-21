@@ -1,3 +1,9 @@
+//! Hand-rolled libp2p P2P stack. **Deprecated in favour of the `ipfs` feature**
+//! (Kubo FFI), which provides working content distribution, NAT traversal and
+//! integrity verification. This module is retained for backward compatibility
+//! behind `--features p2p` (without `ipfs`) and will be removed in a future
+//! release.
+
 use libp2p::futures::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use libp2p::{
     futures::StreamExt,
