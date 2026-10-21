@@ -154,6 +154,10 @@ struct ServeArgs {
     /// use a networked (public) repo config instead of isolated
     #[argh(switch)]
     networked: bool,
+
+    /// publish the registry directory to IPFS on startup and print the root CID
+    #[argh(switch)]
+    publish: bool,
 }
 
 /// Yank a version of a crate from the registry
@@ -612,6 +616,21 @@ enum ServeError {
 }
 
 #[cfg(feature = "ipfs")]
+fn extract_last_cid(s: &str) -> Option<String> {
+    // The FFI command runner returns a Go struct dump like:
+    //   &{path CID %!s(int64=0) ...}&{path2 CID2 ...}
+    // The root CID is the last CID in the output. Find all CID-like tokens.
+    let mut last: Option<String> = None;
+    for token in s.split_whitespace() {
+        let t = token.trim_matches(|c: char| !c.is_alphanumeric());
+        if (t.starts_with("Qm") && t.len() >= 40) || (t.starts_with("baf") && t.len() >= 50) {
+            last = Some(t.to_string());
+        }
+    }
+    last
+}
+
+#[cfg(feature = "ipfs")]
 fn do_serve_ipfs(_global: &Global, serve: ServeArgs) -> Result<(), Error> {
     use kubo_ffi::Node;
 
@@ -651,6 +670,44 @@ fn do_serve_ipfs(_global: &Global, serve: ServeArgs) -> Result<(), Error> {
             );
         } else {
             println!("connected to {}", peer);
+        }
+    }
+
+    // 4b. optionally publish the registry directory to IPFS
+    if serve.publish {
+        let reg_path = r.path.to_string_lossy().to_string();
+        match node.run_on_node(
+            &repo_path.to_string_lossy(),
+            &["add", "-r", "-Q", &reg_path],
+        ) {
+            Ok(out) => {
+                // Extract the last CID from the struct-dump output.
+                let cid = extract_last_cid(&out);
+                match cid {
+                    Some(c) => {
+                        println!("Published registry to IPFS: {}", c);
+                        println!("  root CID: {}", c);
+                        // Try IPNS publish
+                        match node.run_on_node(
+                            &repo_path.to_string_lossy(),
+                            &["name", "publish", &format!("/ipfs/{}", c)],
+                        ) {
+                            Ok(out2) => {
+                                println!(
+                                    "IPNS publish result: {}",
+                                    out2.chars().take(120).collect::<String>()
+                                );
+                            }
+                            Err(e) => eprintln!("IPNS publish failed: {}", e),
+                        }
+                    }
+                    None => eprintln!(
+                        "Could not parse root CID from: {}",
+                        out.chars().take(200).collect::<String>()
+                    ),
+                }
+            }
+            Err(e) => eprintln!("IPFS publish failed: {}", e),
         }
     }
 
