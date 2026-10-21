@@ -2,7 +2,43 @@
 
 Roadmap for the `p2p` feature (`src/p2p.rs`, `margo serve`).
 
-## Context
+## Strategic update: kubo FFI as the implementation substrate
+
+The original plan (Phases 0–4 below) was built on the hand-rolled libp2p stack in
+`src/p2p.rs`. Empirical testing showed that stack re-implements content
+distribution, sync, and peer management from scratch and is broken in
+fundamental ways (see _Evidence_).
+
+A viable alternative now exists: the `RandyMcMillan/kubo` fork ships a C FFI
+layer (`kubo/ffi/`) with a Rust binding (`kubo/ffi/rust/`) that exposes a full
+IPFS node in-process. A completed, tested version of that FFI is on branch
+`1843/972514/263127/a1a6dbad6/867d72303-begin-margo-p2p` (commit `d6241bbe5`).
+
+The FFI provides exactly the shape margo-p2p needs:
+
+- `kubo_init_repo` / `kubo_init_repo_networked` / `kubo_init_repo_with_config`
+- `kubo_node_start` / `kubo_node_stop`
+- `kubo_unixfs_add_bytes` (pinned) / `kubo_unixfs_cat` (binary-safe)
+- `kubo_node_add_static` (serve a registry dir) + `kubo_node_start_gateway`
+  (public-safe: gateway + static only, no writable CoreAPI)
+- `kubo_node_connect`, `kubo_node_peer_id`, `kubo_node_listening_addrs`
+- `kubo_node_start_api` (full, for local/dev use)
+
+Verified end-to-end: two nodes exchange a real `.crate` file (788 bytes, 12
+NUL bytes) byte-for-byte; `GET /ipfs/<cid>` returns the exact bytes with a
+matching sha256; `/config.json` and `/de/mo/<crate>` are served; the writable
+CoreAPI is NOT exposed on the gateway listener. All 13 Rust FFI tests pass.
+
+**Recommendation: pivot the `p2p` feature to the kubo FFI.** Delete the
+hand-rolled libp2p machinery (`Behaviour`, `CommitCodec`, gossipsub, mDNS,
+request-response, `GetCommitData`) and rebuild on the FFI. This eliminates
+~8 of the ~30 items below (integrity verification, git-repo precondition,
+peer dial/bootstrap, NAT traversal, dedup, chunking, blocking event loop,
+stale commit hash) for roughly 400 lines of code.
+
+---
+
+## Context (original)
 
 The `p2p` feature adds a libp2p node to a Margo registry. The intent is to
 distribute crate metadata and packages peer-to-peer instead of relying solely on
@@ -28,6 +64,7 @@ needed for peers to connect at all.
 | Tests                                            | none      |
 | CI coverage of the feature                       | none      |
 | Documentation                                    | none      |
+| **kubo FFI (alternative substrate)**             | **done**  |
 
 ### Evidence
 
@@ -131,6 +168,40 @@ Resolve this before building further on Phase 1 item "apply fetched data".
       connecting to unrelated LAN peers. Either own that decision in the
       registry layout, or document it as a hard precondition.
 
+## Phase 5 — Pivot to kubo FFI (recommended)
+
+Replace the hand-rolled libp2p stack with the kubo FFI. This eliminates
+Phases 1–4 for the content-distribution and reachability concerns.
+
+- [ ] Add `kubo-ffi` as a dependency of `margo-p2p` (git dep on
+      `RandyMcMillan/kubo`, branch
+      `1843/972514/263127/a1a6dbad6/867d72303-begin-margo-p2p`, or a
+      vendored copy under `vendor/kubo/ffi`).
+- [ ] Implement `margo serve` on top of the FFI:
+  - `kubo_init_repo_networked` (or `init_repo_with_config`) for the repo.
+  - `kubo_node_start` + `kubo_node_add_static("/", registry_dir)` before
+    `kubo_node_start_gateway("/ip4/0.0.0.0/tcp/0")`.
+  - Publish each crate via `kubo_unixfs_add_bytes` and store the returned CID
+    in the index entry's `ipfs_cid` field (Cargo ignores unknown fields —
+    verified).
+  - Set `dl` to the gateway URL (or keep it as-is and let the server 302 to
+    `/ipfs/<cid>`).
+- [ ] Add `--peer` / `--bootstrap` to dial known peers via
+      `kubo_node_connect` (the FFI already supports dnsaddr multiaddrs).
+- [ ] Add `--identity` keyfile support (the FFI generates Ed25519 keys; persist
+      the repo so the PeerId is stable).
+- [ ] Re-implement registry sync on top of IPFS: publish the whole registry
+      dir to IPFS and an IPNS name; or simply let each node fetch missing
+      crates by CID from peers.
+- [ ] Verify received crate bytes against `cksum` (Cargo does this on
+      download; add an explicit check for the IPFS path).
+- [ ] Honor `auth_required`: put the gateway behind an access-controlled proxy
+      or run a private swarm.
+- [ ] Add a `p2p-integration` CI job that builds the FFI and runs a
+      two-node smoke test.
+- [ ] Document the feature: `margo serve`, the protocol, the kubo dependency,
+      the threat model.
+
 ## Housekeeping
 
 - [ ] Replace `announced_peers: HashMap<PeerId, bool>` with a `HashSet`
@@ -157,3 +228,5 @@ Resolve this before building further on Phase 1 item "apply fetched data".
 - The HTML index and the Rust/Ruby/TypeScript test suites are unaffected by
   the `p2p` feature.
 - The `integration-gnostr` CI job does not exercise P2P and needs no changes.
+- The kubo FFI's git/nostr/libp2p helpers are not needed for margo-p2p and
+  can be ignored.
