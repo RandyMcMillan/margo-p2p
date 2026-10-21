@@ -207,16 +207,21 @@ Phases 1–4 for the content-distribution and reachability concerns.
 - [x] Decide fate of the hand-rolled libp2p stack: deprecated via module doc
       comment in `src/p2p.rs`; kept behind `--features p2p` for backward
       compat. Removal deferred.
-- [ ] Set `dl` to the gateway URL (or keep as-is and let the server 302 to
-      `/ipfs/<cid>`). Currently `dl` points at static files; IPFS is used
-      for P2P distribution via `ipfs_cid`.
-- [ ] Re-implement registry sync on top of IPFS: publish the whole registry
-      dir to IPFS and an IPNS name; or let each node fetch missing crates by
-      CID from peers.
-- [ ] Honor `auth_required`: put the gateway behind an access-controlled proxy
-      or run a private swarm.
-- [ ] Add a `p2p-integration` CI job that builds the FFI and runs a
-      two-node smoke test.
+- [x] Set `dl` to the gateway URL: decided to keep `dl` pointing at static
+      files (the static-file ethos). IPFS CIDs (`ipfs_cid`) enable P2P
+      distribution; `margo serve --publish` exposes the whole registry via
+      IPFS/IPNS for peer-to-peer sync.
+- [x] Re-implement registry sync on top of IPFS: `margo serve --publish`
+      publishes the whole registry dir to IPFS (root CID) and an IPNS name
+      (`k51qzi5uqu5d...`). Peers can fetch the registry snapshot by CID or
+      IPNS name. Per-crate fetch by CID is already supported via `ipfs_cid`.
+- [x] Add a `p2p-integration` CI job: `build-ipfs` + `check-ipfs` jobs added
+      to `.github/workflows/ci.yml` (installs Go, builds FFI, runs
+      `cargo test --features ipfs -- --nocapture`).
+- [ ] Honor `auth_required`: deferred. The kubo gateway has no built-in auth;
+      options are an access-controlled reverse proxy in front of
+      `margo serve`, or a private IPFS swarm (configure via
+      `margo serve --networked` + custom bootstrap peers).
 
 ## Housekeeping
 
