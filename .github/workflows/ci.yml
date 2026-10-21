@@ -228,6 +228,69 @@ jobs:
       - name: Test (p2p only)
         run: cargo test --no-default-features --features p2p
 
+  build-ipfs:
+    name: Build (ipfs)
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        rust:
+          - nightly
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust }}
+
+      - name: Cache Rust
+        uses: ./.github/actions/cargo-cache
+        with:
+          key: build-ipfs-${{ matrix.rust }}
+
+      - name: Build code (ipfs feature)
+        run: cargo build --features ipfs
+
+  check-ipfs:
+    name: Check (ipfs)
+    runs-on: ubuntu-latest
+
+    needs: build-ipfs
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly
+          components: clippy
+
+      - name: Cache Rust
+        uses: ./.github/actions/cargo-cache
+        with:
+          key: check-ipfs
+
+      - name: Lint code (ipfs)
+        run: cargo clippy --features ipfs --all-targets -- #-D warnings
+
+      - name: Test (ipfs)
+        run: cargo test --features ipfs -- --nocapture
+
   integration-gnostr:
     name: Integration (gnostr)
     runs-on: ubuntu-latest
