@@ -10,7 +10,7 @@
 
 set -euo pipefail
 
-REGISTRY_DIR="${1:-my-registry}"
+TARGET="${1:-repo}"
 PORT="${2:-5173}"
 MODE="${MODE:-dev}"  # dev or preview
 
@@ -18,22 +18,23 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 WEB_DIR="$REPO_ROOT/web"
 
-# Resolve registry path
-if [[ ! -d "$REGISTRY_DIR" ]]; then
-    REGISTRY_ABS="$REPO_ROOT/$REGISTRY_DIR"
+# Resolve target path
+if [ "$TARGET" = "repo" ]; then
+    REGISTRY_ABS="$REPO_ROOT"
+elif [[ ! -d "$TARGET" ]]; then
+    REGISTRY_ABS="$REPO_ROOT/$TARGET"
 else
-    REGISTRY_ABS="$(cd "$REGISTRY_DIR" && pwd)"
+    REGISTRY_ABS="$(cd "$TARGET" && pwd)"
 fi
 
-if [ ! -f "$REGISTRY_ABS/margo-config.toml" ]; then
-    echo "==> Registry not found at $REGISTRY_ABS"
-    echo "    Run: margo init $REGISTRY_DIR --base-url http://localhost:$PORT --html true"
-    echo "    Then: margo add --registry $REGISTRY_DIR <crate.crate>"
-    echo "    Then: margo generate-html --registry $REGISTRY_DIR"
-    exit 1
+# If it's a Margo registry, verify it
+if [ -f "$REGISTRY_ABS/margo-config.toml" ]; then
+    echo "==> Serving Margo registry: $REGISTRY_ABS"
+else
+    echo "==> Serving repository: $REGISTRY_ABS"
 fi
 
-echo "==> Registry: $REGISTRY_ABS"
+echo "==> Target: $REGISTRY_ABS"
 echo "==> Port: $PORT"
 echo "==> Mode: $MODE"
 
