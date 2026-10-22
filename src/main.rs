@@ -122,6 +122,7 @@ struct GenerateHtmlArgs {
 }
 
 /// Start a libp2p P2P node for the registry
+/// Serve the registry
 #[cfg(all(feature = "p2p", not(feature = "ipfs")))]
 #[derive(Debug, argh::FromArgs)]
 #[argh(subcommand)]
@@ -136,6 +137,7 @@ struct ServeArgs {
     listen: Option<String>,
 }
 
+/// Serve the registry over HTTP and IPFS
 #[cfg(feature = "ipfs")]
 #[derive(Debug, argh::FromArgs)]
 #[argh(subcommand)]
