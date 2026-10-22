@@ -191,6 +191,10 @@ struct ServeArgs {
     #[argh(switch)]
     blossom: bool,
 
+    /// serve a browser-based IPFS web app (path to dist/ directory)
+    #[argh(option)]
+    web_dir: Option<PathBuf>,
+
     /// also serve a GRASP (NIP-34) git relay for the registry
     #[cfg(feature = "grasp")]
     #[argh(switch)]
@@ -885,6 +889,18 @@ fn do_serve_ipfs(_global: &Global, serve: ServeArgs) -> Result<(), Error> {
             reason: kubo_ffi::last_error().unwrap_or_else(|| "add_static failed".into()),
         }
         .into());
+    }
+
+    // 3b. register web app dir if provided
+    if let Some(web_dir) = &serve.web_dir {
+        if !node.add_static("/web/", &web_dir.to_string_lossy()) {
+            eprintln!(
+                "Warning: failed to register web dir: {}",
+                kubo_ffi::last_error().unwrap_or_default()
+            );
+        } else {
+            println!("Web app served at /web/");
+        }
     }
     // register crate redirect: /crates/... -> /ipfs/<cid> when available
     node.add_crate_redirect(&r.path.to_string_lossy());

@@ -21,7 +21,12 @@ shift 2>/dev/null || true
 
 case "$CMD" in
     serve)
-        exec $MARGO serve --registry "$REGISTRY" --listen "/ip4/0.0.0.0/tcp/$PORT" "$@"
+        WEB_DIR="${WEB_DIR:-}"
+        if [ -n "$WEB_DIR" ] && [ -d "$WEB_DIR" ]; then
+            exec $MARGO serve --registry "$REGISTRY" --listen "/ip4/0.0.0.0/tcp/$PORT" --web-dir "$WEB_DIR" "$@"
+        else
+            exec $MARGO serve --registry "$REGISTRY" --listen "/ip4/0.0.0.0/tcp/$PORT" "$@"
+        fi
         ;;
     init)
         exec $MARGO init "$@"
