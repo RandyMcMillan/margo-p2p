@@ -121,6 +121,11 @@ struct AddArgs {
     #[argh(option)]
     blossom_server: Option<String>,
 
+    /// nostr secret key (hex or nsec) for Blossom auth upload
+    #[cfg(feature = "blossom-client")]
+    #[argh(option)]
+    blossom_key: Option<String>,
+
     #[argh(positional)]
     path: Vec<PathBuf>,
 }
@@ -590,9 +595,10 @@ fn do_add(global: &Global, add: AddArgs) -> Result<(), Error> {
             publish_ipfs,
             add.blossom,
             add.blossom_server.clone(),
+            add.blossom_key.clone(),
         )?;
         #[cfg(not(feature = "blossom-client"))]
-        r.add(global, i, publish_ipfs, false, None)?;
+        r.add(global, i, publish_ipfs, false, None, None)?;
     }
     r.maybe_generate_html()?;
 
@@ -1734,7 +1740,7 @@ impl Registry {
     }
 
     #[cfg_attr(not(feature = "ipfs"), allow(unused_variables))]
-    #[cfg_attr(not(feature = "blossom"), allow(unused_variables))]
+    #[cfg_attr(not(feature = "blossom-client"), allow(unused_variables))]
     fn add(
         &self,
         global: &Global,
@@ -1742,6 +1748,7 @@ impl Registry {
         publish_ipfs: bool,
         blossom_local: bool,
         blossom_server: Option<String>,
+        _blossom_key: Option<String>,
     ) -> Result<(), AddError> {
         use add_error::*;
 
@@ -1811,46 +1818,68 @@ impl Registry {
 
         #[cfg(feature = "blossom-client")]
         if let Some(server_url) = &blossom_server {
-            let url = format!("{}/upload", server_url.trim_end_matches('/'));
-            let rt = tokio::runtime::Runtime::new().map_err(|e| AddError::Blossom {
-                reason: e.to_string(),
-            })?;
-            let resp = rt
-                .block_on(async {
-                    reqwest::Client::new()
-                        .put(&url)
-                        .header("Content-Type", "application/gzip")
-                        .body(crate_file.clone())
-                        .send()
-                        .await
-                })
-                .map_err(|e| AddError::Blossom {
+            if let Some(key) = &_blossom_key {
+                // Authenticated upload via blossom-rs client (Nostr BIP-340 auth)
+                let signer = blossom_rs::Signer::from_secret_hex(key)
+                    .map_err(|e| AddError::Blossom { reason: e })?;
+                let client = blossom_rs::BlossomClient::new(vec![server_url.clone()], signer);
+                let rt = tokio::runtime::Runtime::new().map_err(|e| AddError::Blossom {
                     reason: e.to_string(),
                 })?;
-            if !resp.status().is_success() {
-                return Err(AddError::Blossom {
-                    reason: format!("HTTP {}", resp.status()),
+                let desc = rt
+                    .block_on(client.upload(&crate_file, "application/gzip"))
+                    .map_err(|e| AddError::Blossom { reason: e })?;
+                let blob_url = desc.url.clone().unwrap_or_else(|| {
+                    format!("{}/{}", server_url.trim_end_matches('/'), desc.sha256)
                 });
-            }
-            let text = rt.block_on(resp.text()).map_err(|e| AddError::Blossom {
-                reason: e.to_string(),
-            })?;
-            let body: serde_json::Value =
-                serde_json::from_str(&text).map_err(|e| AddError::Blossom {
+                println!(
+                    "Published to Blossom (auth): {} (sha256={})",
+                    blob_url, desc.sha256
+                );
+                index_entry.blossom_url = Some(blob_url);
+            } else {
+                // Anonymous upload via HTTP
+                let url = format!("{}/upload", server_url.trim_end_matches('/'));
+                let rt = tokio::runtime::Runtime::new().map_err(|e| AddError::Blossom {
                     reason: e.to_string(),
                 })?;
-            let sha256 = body
-                .get("sha256")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            let blob_url = body
-                .get("url")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| format!("{}/{}", server_url.trim_end_matches('/'), sha256));
-            println!("Published to Blossom: {} (sha256={})", blob_url, sha256);
-            index_entry.blossom_url = Some(blob_url);
+                let resp = rt
+                    .block_on(async {
+                        reqwest::Client::new()
+                            .put(&url)
+                            .header("Content-Type", "application/gzip")
+                            .body(crate_file.clone())
+                            .send()
+                            .await
+                    })
+                    .map_err(|e| AddError::Blossom {
+                        reason: e.to_string(),
+                    })?;
+                if !resp.status().is_success() {
+                    return Err(AddError::Blossom {
+                        reason: format!("HTTP {}", resp.status()),
+                    });
+                }
+                let text = rt.block_on(resp.text()).map_err(|e| AddError::Blossom {
+                    reason: e.to_string(),
+                })?;
+                let body: serde_json::Value =
+                    serde_json::from_str(&text).map_err(|e| AddError::Blossom {
+                        reason: e.to_string(),
+                    })?;
+                let sha256 = body
+                    .get("sha256")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let blob_url = body
+                    .get("url")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| format!("{}/{}", server_url.trim_end_matches('/'), sha256));
+                println!("Published to Blossom: {} (sha256={})", blob_url, sha256);
+                index_entry.blossom_url = Some(blob_url);
+            }
         }
 
         let index_path = self.index_file_path_for(&index_entry.name);
@@ -3038,8 +3067,8 @@ mod test {
             .unwrap();
         let p = c.package().await.unwrap();
 
-        r.add(&global, &p, false, false, None).unwrap();
-        r.add(&global, &p, false, false, None).unwrap();
+        r.add(&global, &p, false, false, None, None).unwrap();
+        r.add(&global, &p, false, false, None, None).unwrap();
 
         let name = CrateName::try_from(c.name()).unwrap();
         let index_file_path = r.index_file_path_for(&name);
@@ -3095,7 +3124,7 @@ mod test {
         let version = version.parse().unwrap();
         let crate_path = r.crate_file_path_for(&name, &version);
 
-        r.add(&global, p, false, false, None).unwrap();
+        r.add(&global, p, false, false, None, None).unwrap();
 
         assert!(
             crate_path.exists(),
@@ -3193,7 +3222,7 @@ mod test {
         let p = c.package().await.unwrap();
 
         println!("adding crate with --ipfs (publish to IPFS)...");
-        r.add(&global, &p, true, false, None).unwrap();
+        r.add(&global, &p, true, false, None, None).unwrap();
         println!("add done");
 
         let name = CrateName::try_from(c.name()).unwrap();
