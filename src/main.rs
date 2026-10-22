@@ -2483,6 +2483,69 @@ mod test {
 
     #[cfg(feature = "ipfs")]
     #[tokio::test]
+    async fn ipfs_two_node_fetch() {
+        println!("=== IPFS two-node fetch test ===");
+        use kubo_ffi::Node;
+        use sha2::Digest;
+
+        let tmp = std::env::temp_dir().join("margo-two-node-test");
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+
+        // Node A: publish a crate
+        let reg_a = tmp.join("regA");
+        std::fs::create_dir_all(&reg_a).unwrap();
+        kubo_ffi::init_repo(&reg_a.join(".ipfs-repo").to_string_lossy()).unwrap();
+        let node_a = Node::start(&reg_a.join(".ipfs-repo").to_string_lossy(), true).unwrap();
+
+        let crate_bytes = b"fake crate content for two-node test 1234567890";
+        let cid = node_a.unixfs_add_bytes(crate_bytes).unwrap();
+        println!("Node A published CID: {}", cid);
+
+        let peer_id_a = node_a.peer_id().unwrap();
+        let addr_a = node_a
+            .listening_addrs()
+            .unwrap()
+            .lines()
+            .next()
+            .unwrap()
+            .to_string();
+        println!("Node A: peer_id={}, addr={}", peer_id_a, addr_a);
+
+        // Node B: fetch by CID
+        let reg_b = tmp.join("regB");
+        std::fs::create_dir_all(&reg_b).unwrap();
+        kubo_ffi::init_repo(&reg_b.join(".ipfs-repo").to_string_lossy()).unwrap();
+        let node_b = Node::start(&reg_b.join(".ipfs-repo").to_string_lossy(), true).unwrap();
+
+        let dial_addr = format!("{}/p2p/{}", addr_a, peer_id_a);
+        assert!(node_b.connect(&dial_addr), "Node B must connect to Node A");
+        println!("Node B connected to Node A");
+
+        let fetched = node_b
+            .unixfs_cat(&cid)
+            .expect("Node B must fetch crate by CID");
+        assert_eq!(fetched, crate_bytes, "fetched bytes must match");
+        let hash = hex::encode(sha2::Sha256::digest(&fetched));
+        println!(
+            "Node B fetched {} bytes, sha256={}",
+            fetched.len(),
+            &hash[..12]
+        );
+
+        // Verify cksum would match (simulate)
+        let expected_cksum = hex::encode(sha2::Sha256::digest(crate_bytes));
+        assert_eq!(hash, expected_cksum);
+        println!("cksum verification: OK");
+
+        drop(node_a);
+        drop(node_b);
+        let _ = std::fs::remove_dir_all(&tmp);
+        println!("=== IPFS two-node fetch test PASSED ===");
+    }
+
+    #[cfg(feature = "ipfs")]
+    #[tokio::test]
     async fn ipfs_publish_and_verify() {
         println!("=== IPFS publish + verify test ===");
         let global = Global::new().unwrap();
