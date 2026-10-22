@@ -1610,7 +1610,7 @@ dependencies = [
 [[package]]
 name = "kubo-ffi"
 version = "0.3.0"
-source = "git+https://github.com/RandyMcMillan/kubo?tag=v0.43.1-ffi.4#62c926b7fc693443917f8ac7453751242e34af5f"
+source = "git+https://github.com/RandyMcMillan/kubo?tag=v0.43.1-ffi.4#38180098c205d03b27cbed41510633735074bfca"
 
 [[package]]
 name = "libc"
