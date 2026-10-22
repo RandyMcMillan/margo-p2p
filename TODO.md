@@ -220,10 +220,11 @@ Phases 1–4 for the content-distribution and reachability concerns.
 - [x] Add a `p2p-integration` CI job: `build-ipfs` + `check-ipfs` jobs added
       to `.github/workflows/ci.yml` (installs Go, builds FFI, runs
       `cargo test --features ipfs -- --nocapture`).
-- [ ] Honor `auth_required`: deferred. The kubo gateway has no built-in auth;
-      options are an access-controlled reverse proxy in front of
-      `margo serve`, or a private IPFS swarm (configure via
-      `margo serve --networked` + custom bootstrap peers).
+- [x] Honor `auth_required`: `margo add --ipfs` now warns when `auth_required`
+      is true (publishing to public IPFS bypasses auth). `margo serve` warns
+      when binding to a non-localhost address with `auth_required` set.
+      Full enforcement via reverse proxy or private swarm (documented in
+      README).
 
 ## Housekeeping
 
