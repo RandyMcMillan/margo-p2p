@@ -181,15 +181,28 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Install pnpm and node
+        uses: pnpm/setup@v2
+        with:
+          version: ^11
+          runtime: node@26
+          cache: true
+
       - name: Install Go
         uses: actions/setup-go@v5
         with:
           go-version: '1.26'
 
+      - name: Build UI assets
+        run: pnpm build
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: '1.90'
+
+      - name: Convert assets to Rust
+        run: cargo xtask assets
 
       - name: Build code (ipfs feature)
         run: cargo build --features ipfs
@@ -204,16 +217,29 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Install pnpm and node
+        uses: pnpm/setup@v2
+        with:
+          version: ^11
+          runtime: node@26
+          cache: true
+
       - name: Install Go
         uses: actions/setup-go@v5
         with:
           go-version: '1.26'
+
+      - name: Build UI assets
+        run: pnpm build
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: '1.90'
           components: clippy
+
+      - name: Convert assets to Rust
+        run: cargo xtask assets
 
       - name: Lint code (ipfs)
         run: cargo clippy --features ipfs --all-targets -- #-D warnings
