@@ -181,13 +181,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Checkout kubo (for FFI)
-        uses: actions/checkout@v4
-        with:
-          repository: RandyMcMillan/kubo
-          ref: v0.43.1-ffi.4
-          path: kubo
-
       - name: Install Go
         uses: actions/setup-go@v5
         with:
@@ -210,13 +203,6 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
-      - name: Checkout kubo (for FFI)
-        uses: actions/checkout@v4
-        with:
-          repository: RandyMcMillan/kubo
-          ref: v0.43.1-ffi.4
-          path: kubo
 
       - name: Install Go
         uses: actions/setup-go@v5

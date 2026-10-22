@@ -13,6 +13,16 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v7
 
+      - name: Install Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: '1.90'
+
       - name: Build code
         run: cargo build --release
 
@@ -38,6 +48,16 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v7
 
+      - name: Install Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: '1.90'
+
       - name: Build code
         run: cargo build --release
 
@@ -53,6 +73,16 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
+
+      - name: Install Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: '1.90'
 
       - name: Build code
         run: cargo build --release

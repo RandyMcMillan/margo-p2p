@@ -3,3 +3,6 @@ xtask = ["run", "--package", "xtask", "--"]
 
 [registries.registry-conformance]
 index = "sparse+https://integer32llc.github.io/registry-conformance/"
+
+[net]
+git-fetch-with-cli = true

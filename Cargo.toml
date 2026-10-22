@@ -24,7 +24,6 @@ crawler = ["dep:reqwest", "dep:tokio"]
 members = [
     "conformance",
     "xtask",
-    "kubo/ffi/rust",
 ]
 
 [workspace.lints.rust]
@@ -52,7 +51,7 @@ flate2 = { version = "1.0.28", default-features = false, features = ["rust_backe
 hex = { version = "0.4.3", default-features = false, features = ["std"] }
 indoc = { version = "2.0.5", default-features = false, optional = true }
 
-kubo-ffi = { git = "https://github.com/RandyMcMillan/kubo", tag = "v0.43.1-ffi.3", package = "kubo-ffi", optional = true }
+kubo-ffi = { git = "https://github.com/RandyMcMillan/kubo", tag = "v0.43.1-ffi.4", package = "kubo-ffi", optional = true }
 blossom-rs = { version = "0.6", default-features = false, features = ["client", "server", "filesystem"], optional = true }
 blossom-nip34 = { version = "0.6", optional = true }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"], optional = true }
