@@ -38,6 +38,16 @@ jobs:
         with:
           toolchain: '1.90'
 
+      - name: Install pnpm and node
+        uses: pnpm/setup@v2
+        with:
+          version: ^11
+          runtime: node@26
+          cache: true
+
+      - name: Build UI assets
+        run: pnpm build
+
       - name: Build margo
         run: cargo build --features ipfs
 
