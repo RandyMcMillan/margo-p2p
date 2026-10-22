@@ -136,6 +136,7 @@ fn index(config: &ConfigV1, crates: &ListAll) -> Markup {
                 meta charset="utf-8";
                 meta name="viewport" content="width=device-width, initial-scale=1";
                 title { "Margo Crate Registry" };
+                link rel="icon" href="data:,";
                 (asset_head_elements);
             }
 
