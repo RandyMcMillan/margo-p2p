@@ -18,7 +18,6 @@ blossom-client = ["dep:blossom-rs", "dep:reqwest", "dep:tokio"]
 blossom-server = ["dep:blossom-rs", "dep:axum", "dep:tower-http", "dep:tokio", "ipfs"]
 blossom = ["blossom-client", "blossom-server"]
 grasp = ["dep:blossom-nip34", "dep:axum", "dep:tokio"]
-reverse-proxy = ["dep:axum", "dep:tokio", "dep:hyper", "dep:hyper-util", "dep:tower", "dep:tower-http", "dep:reqwest"]
 crawler = ["dep:reqwest", "dep:tokio"]
 
 [workspace]
@@ -59,9 +58,6 @@ blossom-nip34 = { version = "0.6", optional = true }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"], optional = true }
 tower-http = { version = "0.6", features = ["fs"], optional = true }
 axum = { version = "0.8", optional = true }
-hyper = { version = "1", optional = true }
-hyper-util = { version = "0.1", features = ["tokio"], optional = true }
-tower = { version = "0.5", optional = true }
 maud = { version = "0.27.0", default-features = false, optional = true }
 semver = { version = "1.0.23", default-features = false, features = ["serde", "std"] }
 serde = { version = "1.0.197", default-features = false, features = ["derive", "std"] }
