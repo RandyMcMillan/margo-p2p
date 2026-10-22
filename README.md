@@ -83,6 +83,10 @@ on download, so integrity is enforced end-to-end.
 ```bash
 # Verify every crate file against its recorded cksum (and IPFS, if present)
 margo verify --registry my-registry-directory
+
+# Sync a local registry with a remote one via IPFS
+margo sync --registry my-registry-directory --cid Qm...rootCID...
+margo sync --registry my-registry-directory --ipns k51qzi5uqu5d...
 ```
 
 For public-network participation, use `--networked` (enables mDNS, QUIC,

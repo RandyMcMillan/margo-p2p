@@ -214,9 +214,11 @@ Phases 1–4 for the content-distribution and reachability concerns.
       static file URL for backward compat; the redirect makes IPFS the
       preferred path when available.
 - [x] Re-implement registry sync on top of IPFS: `margo serve --publish`
-      publishes the whole registry dir to IPFS (root CID) and an IPNS name
-      (`k51qzi5uqu5d...`). Peers can fetch the registry snapshot by CID or
-      IPNS name. Per-crate fetch by CID is already supported via `ipfs_cid`.
+      publishes the whole registry dir to IPFS (root CID) and an IPNS name.
+      `margo sync --cid <rootCID>` or `margo sync --ipns <name>` fetches the
+      remote registry snapshot, merges index entries, and downloads missing
+      crate files by CID. Per-crate fetch by CID already supported via
+      `ipfs_cid`.
 - [x] Add a `p2p-integration` CI job: `build-ipfs` + `check-ipfs` jobs added
       to `.github/workflows/ci.yml` (installs Go, builds FFI, runs
       `cargo test --features ipfs -- --nocapture`).
