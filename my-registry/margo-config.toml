@@ -1,7 +1,0 @@
-version = "1"
-base_url = "http://127.0.0.1:8080/"
-auth_required = false
-
-[html]
-enabled = true
-suggested_registry_name = "my-awesome-registry"
