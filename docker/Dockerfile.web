@@ -1,0 +1,27 @@
+# syntax=docker/dockerfile:1
+# Build the browser-based IPFS node for Margo registries
+
+FROM node:20-alpine AS builder
+
+WORKDIR /app
+
+# Copy package files
+COPY web/package*.json ./
+RUN npm ci
+
+# Copy web source
+COPY web/ ./
+
+# Build with registry files embedded
+ARG REPO_ROOT=/registry
+ENV REPO_ROOT=${REPO_ROOT}
+RUN npm run build -- --outDir /app/dist --emptyOutDir
+
+# ── Stage 2: Serve with nginx ──────────────────────────────────────
+FROM nginx:alpine AS runtime
+
+COPY --from=builder /app/dist /usr/share/nginx/html
+
+EXPOSE 80
+
+CMD ["nginx", "-g", "daemon off;"]

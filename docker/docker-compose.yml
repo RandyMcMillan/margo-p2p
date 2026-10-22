@@ -1,0 +1,52 @@
+version: "3.8"
+
+services:
+  margo:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.margo
+      args:
+        FEATURES: "${MARGO_FEATURES:-ipfs}"
+    ports:
+      - "${MARGO_PORT:-8080}:8080"
+    volumes:
+      - registry-data:/data/registry
+      - ipfs-data:/data/ipfs
+    environment:
+      - MARGO_REGISTRY=/data/registry
+      - MARGO_BASE_URL=${MARGO_BASE_URL:-http://localhost:8080/}
+      - MARGO_PORT=8080
+    command: serve
+    restart: unless-stopped
+
+  # Optional: Kubo IPFS node for P2P
+  kubo:
+    image: ipfs/kubo:latest
+    profiles: ["ipfs"]
+    ports:
+      - "4001:4001"
+      - "5001:5001"
+      - "8081:8080"
+    volumes:
+      - ipfs-data:/data/ipfs
+    environment:
+      - IPFS_PATH=/data/ipfs
+
+  # Optional: Blossom server for blob storage
+  blossom:
+    image: ghcr.io/monumentalsystems/blossom-server:latest
+    profiles: ["blossom"]
+    ports:
+      - "3000:3000"
+    volumes:
+      - blossom-data:/data/blossom
+    environment:
+      - DATA_DIR=/data/blossom
+      - BIND=0.0.0.0:3000
+      - BASE_URL=http://localhost:3000
+      - ALLOW_ANONYMOUS_UPLOADS=true
+
+volumes:
+  registry-data:
+  ipfs-data:
+  blossom-data:

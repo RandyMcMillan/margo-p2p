@@ -1,0 +1,64 @@
+# syntax=docker/dockerfile:1
+# Multi-stage build for Margo registry server
+
+ARG GO_VERSION=1.26.5
+ARG RUST_VERSION=1.90.0
+ARG FEATURES="ipfs"
+
+# ── Stage 1: Build margo ──────────────────────────────────────────
+FROM --platform=$BUILDPLATFORM golang:${GO_VERSION} AS go-builder
+
+# Go is needed for the kubo FFI build
+RUN go version
+
+FROM --platform=$BUILDPLATFORM rust:${RUST_VERSION} AS rust-builder
+
+# Install Go for FFI build
+COPY --from=go-builder /usr/local/go /usr/local/go
+ENV PATH="/usr/local/go/bin:${PATH}"
+
+WORKDIR /app
+
+# Copy Cargo manifests first for layer caching
+COPY Cargo.toml Cargo.lock ./
+COPY .cargo .cargo
+
+# Copy kubo FFI (vendored)
+COPY kubo kubo
+
+# Copy source
+COPY src src
+COPY xtask xtask
+COPY conformance conformance
+
+# Build with specified features
+ARG FEATURES="ipfs"
+RUN cargo build --release --features "${FEATURES}"
+
+# ── Stage 2: Runtime ──────────────────────────────────────────────
+FROM debian:bookworm-slim AS runtime
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy the binary
+COPY --from=rust-builder /app/target/release/margo /usr/local/bin/margo
+
+# Create data directory
+RUN mkdir -p /data/registry /data/ipfs
+
+# Default command
+ENV MARGO_REGISTRY=/data/registry
+ENV MARGO_BASE_URL=http://localhost:8080/
+ENV MARGO_PORT=8080
+
+EXPOSE 8080
+
+# Entrypoint script
+COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+CMD ["serve"]
