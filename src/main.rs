@@ -636,6 +636,30 @@ fn do_serve_ipfs(_global: &Global, serve: ServeArgs) -> Result<(), Error> {
 
     let r = discover_registry(serve.registry)?;
 
+    #[cfg(feature = "ipfs")]
+    {
+        // Read auth_required from config.json if present.
+        let config_path = r.path.join("config.json");
+        if let Ok(contents) = std::fs::read_to_string(&config_path) {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&contents) {
+                if v.get("auth-required")
+                    .and_then(|x| x.as_bool())
+                    .unwrap_or(false)
+                {
+                    let listen = serve.listen.as_deref().unwrap_or("/ip4/0.0.0.0/tcp/0");
+                    if !listen.contains("127.0.0.1") && !listen.contains("localhost") {
+                        eprintln!(
+                            "WARNING: auth_required is true but margo serve is binding to {}. \
+                             IPFS content is public by default. Consider binding to localhost \
+                             and putting a reverse proxy (nginx/Caddy) in front for auth.",
+                            listen
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     // 1. init repo (reuse .ipfs-repo if it exists from `margo add --ipfs`)
     let repo_path = r.path.join(".ipfs-repo");
     if !repo_path.exists() {
@@ -885,6 +909,19 @@ impl Registry {
 
         #[cfg(feature = "ipfs")]
         if publish_ipfs {
+            let config_path = self.path.join("config.json");
+            let auth_required = std::fs::read_to_string(&config_path)
+                .ok()
+                .and_then(|c| serde_json::from_str::<serde_json::Value>(&c).ok())
+                .and_then(|v| v.get("auth-required").and_then(|x| x.as_bool()))
+                .unwrap_or(self.config.auth_required);
+            if auth_required {
+                eprintln!(
+                    "WARNING: auth_required is true but --ipfs publishes the crate to the PUBLIC \
+                     IPFS network. Anyone with the CID can fetch it, bypassing auth. \
+                     Proceeding anyway; use a private swarm (--networked + swarm key) for privacy."
+                );
+            }
             let repo_path = self.path.join(".ipfs-repo");
             if !repo_path.exists() {
                 kubo_ffi::init_repo_networked(&repo_path.to_string_lossy())
