@@ -28,6 +28,13 @@ jobs:
           ref: v0.43.1-ffi.4
           path: kubo
 
+      - name: Install pnpm and node
+        uses: pnpm/setup@v2
+        with:
+          version: ^11
+          runtime: node@26
+          cache: true
+
       - name: Install Go
         uses: actions/setup-go@v5
         with:
@@ -37,6 +44,9 @@ jobs:
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: '1.90'
+
+      - name: Convert assets to Rust
+        run: cargo xtask assets
 
       - name: Build margo
         run: cargo build --features ipfs
