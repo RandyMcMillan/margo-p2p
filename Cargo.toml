@@ -15,7 +15,7 @@ default = ["html", "ipfs"]
 html = ["dep:maud", "dep:indoc"]
 p2p = ["dep:async-trait", "dep:base64", "dep:libp2p", "dep:tokio"]
 ipfs = ["dep:kubo-ffi"]
-blossom = ["dep:blossom-rs", "dep:tokio", "dep:reqwest"]
+blossom = ["dep:blossom-rs", "dep:tokio", "dep:reqwest", "dep:tower-http", "dep:axum"]
 
 [workspace]
 members = [
@@ -53,6 +53,8 @@ libp2p = { version = "0.54", default-features = false, features = ["gossipsub", 
 kubo-ffi = { path = "kubo/ffi/rust", optional = true }
 blossom-rs = { version = "0.6", default-features = false, features = ["client", "server", "filesystem"], optional = true }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"], optional = true }
+tower-http = { version = "0.6", features = ["fs"], optional = true }
+axum = { version = "0.8", optional = true }
 maud = { version = "0.27.0", default-features = false, optional = true }
 semver = { version = "1.0.23", default-features = false, features = ["serde", "std"] }
 serde = { version = "1.0.197", default-features = false, features = ["derive", "std"] }

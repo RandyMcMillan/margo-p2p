@@ -95,10 +95,15 @@ struct AddArgs {
     #[argh(switch)]
     ipfs: bool,
 
-    /// upload the crate to a Blossom server and record the blob URL
+    /// store the crate as a local Blossom blob (in .blossom-blobs/)
+    #[cfg(feature = "blossom")]
+    #[argh(switch)]
+    blossom: bool,
+
+    /// upload the crate to a remote Blossom server URL
     #[cfg(feature = "blossom")]
     #[argh(option)]
-    blossom: Option<String>,
+    blossom_server: Option<String>,
 
     #[argh(positional)]
     path: Vec<PathBuf>,
@@ -173,6 +178,11 @@ struct ServeArgs {
     /// publish the registry directory to IPFS on startup and print the root CID
     #[argh(switch)]
     publish: bool,
+
+    /// also serve blobs via an embedded Blossom server
+    #[cfg(feature = "blossom")]
+    #[argh(switch)]
+    blossom: bool,
 }
 
 /// Yank a version of a crate from the registry
@@ -476,9 +486,15 @@ fn do_add(global: &Global, add: AddArgs) -> Result<(), Error> {
 
     for i in add.path {
         #[cfg(feature = "blossom")]
-        r.add(global, i, publish_ipfs, add.blossom.clone())?;
+        r.add(
+            global,
+            i,
+            publish_ipfs,
+            add.blossom,
+            add.blossom_server.clone(),
+        )?;
         #[cfg(not(feature = "blossom"))]
-        r.add(global, i, publish_ipfs, None)?;
+        r.add(global, i, publish_ipfs, false, None)?;
     }
     r.maybe_generate_html()?;
 
@@ -804,7 +820,38 @@ fn do_serve_ipfs(_global: &Global, serve: ServeArgs) -> Result<(), Error> {
     println!("  registry: http://0.0.0.0:{}/config.json", port);
     println!("  peer id:  {}", node.peer_id().unwrap_or_default());
 
-    // 6. block forever (Ctrl-C to exit)
+    // 6. optionally start an embedded Blossom server
+    #[cfg(feature = "blossom")]
+    if serve.blossom {
+        let blossom_port = 3000u16;
+        let blobs_dir = r.path.join(".blossom-blobs");
+        std::fs::create_dir_all(&blobs_dir).ok();
+        let base_url = format!("http://0.0.0.0:{}", blossom_port);
+        let backend = blossom_rs::FilesystemBackend::new(&blobs_dir.to_string_lossy())
+            .expect("failed to create blossom backend");
+        let server = blossom_rs::BlobServer::new(backend, &base_url);
+        let router = server.router();
+        // Add static file serving for registry files
+        let static_dir = r.path.clone();
+        let app = router.fallback_service(tower_http::services::ServeDir::new(&static_dir));
+
+        let addr = format!("0.0.0.0:{}", blossom_port);
+        println!(
+            "Blossom server listening on http://0.0.0.0:{}",
+            blossom_port
+        );
+        println!("  blobs: {}/.blossom-blobs/", r.path.display());
+
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(async {
+                let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
+                axum::serve(listener, app).await.unwrap();
+            });
+        });
+    }
+
+    // 7. block forever (Ctrl-C to exit)
     loop {
         std::thread::sleep(std::time::Duration::from_secs(3600));
     }
@@ -1201,6 +1248,7 @@ impl Registry {
         global: &Global,
         crate_path: impl AsRef<Path>,
         publish_ipfs: bool,
+        blossom_local: bool,
         blossom_server: Option<String>,
     ) -> Result<(), AddError> {
         use add_error::*;
@@ -1252,6 +1300,21 @@ impl Registry {
             println!("Published to IPFS: {}", cid);
             index_entry.ipfs_cid = Some(cid);
             // node dropped here; repo + pin persist on disk
+        }
+
+        #[cfg(feature = "blossom")]
+        if blossom_local {
+            // Store blob locally in .blossom-blobs/<sha256>
+            use sha2::Digest;
+            let sha256 = hex::encode(sha2::Sha256::digest(&crate_file));
+            let blobs_dir = self.path.join(".blossom-blobs");
+            std::fs::create_dir_all(&blobs_dir).ok();
+            std::fs::write(blobs_dir.join(format!("{}.blob", sha256)), &crate_file).ok();
+            println!(
+                "Stored Blossom blob locally: {} (sha256={})",
+                sha256, sha256
+            );
+            index_entry.blossom_url = Some(format!("http://localhost:3000/{}", sha256));
         }
 
         #[cfg(feature = "blossom")]
@@ -2483,8 +2546,8 @@ mod test {
             .unwrap();
         let p = c.package().await.unwrap();
 
-        r.add(&global, &p, false, None).unwrap();
-        r.add(&global, &p, false, None).unwrap();
+        r.add(&global, &p, false, false, None).unwrap();
+        r.add(&global, &p, false, false, None).unwrap();
 
         let name = CrateName::try_from(c.name()).unwrap();
         let index_file_path = r.index_file_path_for(&name);
@@ -2540,7 +2603,7 @@ mod test {
         let version = version.parse().unwrap();
         let crate_path = r.crate_file_path_for(&name, &version);
 
-        r.add(&global, p, false, None).unwrap();
+        r.add(&global, p, false, false, None).unwrap();
 
         assert!(
             crate_path.exists(),
@@ -2638,7 +2701,7 @@ mod test {
         let p = c.package().await.unwrap();
 
         println!("adding crate with --ipfs (publish to IPFS)...");
-        r.add(&global, &p, true, None).unwrap();
+        r.add(&global, &p, true, false, None).unwrap();
         println!("add done");
 
         let name = CrateName::try_from(c.name()).unwrap();
