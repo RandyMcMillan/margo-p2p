@@ -1898,7 +1898,7 @@ dependencies = [
 
 [[package]]
 name = "kubo-ffi"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "crossterm",
  "ratatui",
@@ -2025,7 +2025,7 @@ dependencies = [
 
 [[package]]
 name = "margo"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "argh",
  "ascii",
