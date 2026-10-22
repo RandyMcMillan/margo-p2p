@@ -55,12 +55,13 @@ serve static files from whatever URL you've specified.
 
 ### Peer-to-peer distribution (optional)
 
-Margo can optionally publish crates to [IPFS][ipfs] and serve the registry
-over an embedded IPFS node, so crates can be fetched peer-to-peer in addition
-to (or instead of) the static HTTP files. This is enabled by the `ipfs`
-feature, which is on by default.
+Margo can optionally publish crates to [IPFS][ipfs] and/or [Blossom][blossom]
+and serve the registry over an embedded node, so crates can be fetched
+peer-to-peer in addition to (or instead of) the static HTTP files. The `ipfs`
+feature is on by default; the `blossom` feature is optional.
 
 [ipfs]: https://ipfs.tech
+[blossom]: https://github.com/hzrd149/blossom
 
 ```bash
 # Publish a crate to IPFS while adding it to the registry
@@ -68,6 +69,13 @@ margo add --registry my-registry-directory --ipfs some-crate/target/package/some
 
 # Serve the registry over HTTP + IPFS gateway
 margo serve --registry my-registry-directory
+
+# Publish a crate to a Blossom server (Nostr-authenticated blob storage)
+margo add --registry my-registry-directory --blossom http://localhost:3000 some-crate/target/package/some-crate-1.2.3.crate
+
+# Store a crate as a local Blossom blob and serve it
+margo add --registry my-registry-directory --blossom some-crate/target/package/some-crate-1.2.3.crate
+margo serve --registry my-registry-directory --blossom
 ```
 
 `margo serve` (ipfs) does three things:
