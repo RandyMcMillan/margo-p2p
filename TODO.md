@@ -220,6 +220,10 @@ Phases 1–4 for the content-distribution and reachability concerns.
       remote registry snapshot, merges index entries, and downloads missing
       crate files by CID. Per-crate fetch by CID already supported via
       `ipfs_cid`.
+- [x] GRASP git sync (alternative sync model): `margo sync --git <url>`
+      clones a remote git repository and merges registry files (index entries
+      and crate files) into the local registry. Uses git for sync instead of
+      (or in addition to) IPFS. kubo FFI provides git clone/push/fetch/etc.
 - [x] Add a `p2p-integration` CI job: `build-ipfs` + `check-ipfs` jobs added
       to `.github/workflows/ci.yml` (installs Go, builds FFI, runs
       `cargo test --features ipfs -- --nocapture`).
