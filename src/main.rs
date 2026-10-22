@@ -48,6 +48,8 @@ enum Subcommand {
     Serve(ServeArgs),
     #[cfg(feature = "ipfs")]
     Sync(SyncArgs),
+    #[cfg(feature = "crawler")]
+    Discover(DiscoverArgs),
 }
 
 /// Initialize a new registry
@@ -250,6 +252,25 @@ struct VerifyArgs {
     registry: Option<PathBuf>,
 }
 
+/// Discover Nostr relays and their capabilities
+#[cfg(feature = "crawler")]
+#[derive(Debug, argh::FromArgs)]
+#[argh(subcommand)]
+#[argh(name = "discover")]
+struct DiscoverArgs {
+    /// relay URLs to probe (space-separated)
+    #[argh(positional)]
+    relays: Vec<String>,
+
+    /// filter by NIP number (e.g., 34 for NIP-34 git support)
+    #[argh(option)]
+    nip: Option<u32>,
+
+    /// output format: text or json
+    #[argh(option, default = "String::from(\"text\")")]
+    format: String,
+}
+
 /// Sync a local registry with a remote registry via IPFS
 #[cfg(feature = "ipfs")]
 #[derive(Debug, argh::FromArgs)]
@@ -312,6 +333,8 @@ fn main() -> Result<(), Error> {
         Subcommand::Serve(serve) => do_serve_ipfs(global, serve)?,
         #[cfg(feature = "ipfs")]
         Subcommand::Sync(sync) => do_sync_ipfs(global, sync)?,
+        #[cfg(feature = "crawler")]
+        Subcommand::Discover(discover) => do_discover(discover)?,
     }
 
     Ok(())
@@ -1642,6 +1665,120 @@ enum SyncError {
 
     #[snafu(display("IO error: {reason}"))]
     Io { reason: String },
+}
+
+#[cfg(feature = "crawler")]
+fn do_discover(args: DiscoverArgs) -> Result<(), Error> {
+    use std::time::Instant;
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .unwrap();
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let started = Instant::now();
+        let mut results: Vec<(String, serde_json::Value)> = Vec::new();
+
+        // Concurrent fetch with bounded concurrency (16)
+        let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(16));
+        let mut handles = Vec::new();
+
+        for url in &args.relays {
+            let url = url.clone();
+            let client = client.clone();
+            let sem = semaphore.clone();
+            let nip_filter = args.nip;
+            handles.push(tokio::spawn(async move {
+                let _permit = sem.acquire().await.unwrap();
+                let http_url = url
+                    .replace("wss://", "https://")
+                    .replace("ws://", "http://");
+                let resp = client
+                    .get(&http_url)
+                    .header("Accept", "application/nostr+json")
+                    .send()
+                    .await;
+                match resp {
+                    Ok(r) if r.status().is_success() => {
+                        if let Ok(text) = r.text().await {
+                            if let Ok(meta) = serde_json::from_str::<serde_json::Value>(&text) {
+                                // Filter by NIP if requested
+                                if let Some(nip) = nip_filter {
+                                    if let Some(nips) =
+                                        meta.get("supported_nips").and_then(|v| v.as_array())
+                                    {
+                                        if !nips.iter().any(|n| n.as_u64() == Some(nip as u64)) {
+                                            return None;
+                                        }
+                                    } else {
+                                        return None;
+                                    }
+                                }
+                                return Some((url, meta));
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+                None
+            }));
+        }
+
+        for handle in handles {
+            if let Ok(Some((url, meta))) = handle.await {
+                results.push((url, meta));
+            }
+        }
+
+        if args.format == "json" {
+            let json = serde_json::to_string_pretty(
+                &results
+                    .iter()
+                    .map(|(u, m)| {
+                        let mut obj = m.clone();
+                        obj["url"] = serde_json::Value::String(u.clone());
+                        obj
+                    })
+                    .collect::<Vec<_>>(),
+            )
+            .unwrap();
+            println!("{}", json);
+        } else {
+            println!(
+                "Discovered {} relays ({}ms):",
+                results.len(),
+                started.elapsed().as_millis()
+            );
+            for (url, meta) in &results {
+                let name = meta.get("name").and_then(|v| v.as_str()).unwrap_or("?");
+                let desc = meta
+                    .get("description")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let nips = meta
+                    .get("supported_nips")
+                    .and_then(|v| v.as_array())
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|n| n.as_u64())
+                            .map(|n| n.to_string())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    })
+                    .unwrap_or_default();
+                println!("  {} — {} (NIPs: {})", url, name, nips);
+                if !desc.is_empty() {
+                    println!("    {}", desc.chars().take(80).collect::<String>());
+                }
+            }
+        }
+
+        Ok::<(), Error>(())
+    })?;
+
+    Ok(())
 }
 
 fn discover_registry(path: Option<PathBuf>) -> Result<Registry, DiscoverRegistryError> {

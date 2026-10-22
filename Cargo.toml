@@ -19,6 +19,7 @@ blossom-server = ["dep:blossom-rs", "dep:axum", "dep:tower-http", "dep:tokio", "
 blossom = ["blossom-client", "blossom-server"]
 grasp = ["dep:blossom-nip34", "dep:axum", "dep:tokio"]
 reverse-proxy = ["dep:axum", "dep:tokio", "dep:hyper", "dep:hyper-util", "dep:tower", "dep:tower-http", "dep:reqwest"]
+crawler = ["dep:reqwest", "dep:tokio"]
 
 [workspace]
 members = [

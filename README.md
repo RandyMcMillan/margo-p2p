@@ -101,6 +101,10 @@ margo sync --registry my-registry-directory --git https://github.com/org/registr
 
 # Sync via GRASP (Nostr-authorized git relay)
 margo sync --registry my-registry-directory --grasp http://relay:8080 --grasp-npub npub1... --grasp-repo registry
+
+# Discover Nostr relays and their capabilities
+margo discover wss://relay.damus.io wss://nos.lol
+margo discover --nip 34 wss://relay.damus.io wss://nos.lol
 ```
 
 For public-network participation, use `--networked` (enables mDNS, QUIC,
