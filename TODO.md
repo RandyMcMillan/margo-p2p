@@ -204,9 +204,10 @@ Phases 1–4 for the content-distribution and reachability concerns.
 - [x] Document the feature: README now has a "Peer-to-peer distribution"
       section covering `margo serve`, `margo add --ipfs`, `margo verify`,
       `--networked`, and the kubo dependency.
-- [x] Decide fate of the hand-rolled libp2p stack: deprecated via module doc
-      comment in `src/p2p.rs`; kept behind `--features p2p` for backward
-      compat. Removal deferred.
+- [x] Delete hand-rolled libp2p stack: removed `src/p2p.rs`, removed `p2p`
+      feature, removed `libp2p`/`async-trait`/`base64` dependencies, removed
+      `build-p2p`/`check-p2p` CI jobs. The `ipfs` feature is now the sole
+      P2P implementation.
 - [x] Set `dl` to the gateway URL: `margo serve` now 302-redirects
       `/crates/{prefix}/{crate}/{version}.crate` to `/ipfs/<cid>` when the
       index entry has an `ipfs_cid` (via `kubo_node_add_crate_redirect`).

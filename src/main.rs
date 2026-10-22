@@ -15,9 +15,6 @@ use url::Url;
 #[cfg(feature = "html")]
 mod html;
 
-#[cfg(feature = "p2p")]
-mod p2p;
-
 #[cfg(feature = "ipfs")]
 use kubo_ffi as _;
 
@@ -44,9 +41,6 @@ enum Subcommand {
     List(ListArgs),
     Verify(VerifyArgs),
     GenerateHtml(GenerateHtmlArgs),
-    #[cfg(all(feature = "p2p", not(feature = "ipfs")))]
-    Serve(ServeArgs),
-    #[cfg(feature = "ipfs")]
     Serve(ServeArgs),
     #[cfg(feature = "ipfs")]
     Sync(SyncArgs),
@@ -137,24 +131,7 @@ struct GenerateHtmlArgs {
     registry: Option<PathBuf>,
 }
 
-/// Start a libp2p P2P node for the registry
-/// Serve the registry
-#[cfg(all(feature = "p2p", not(feature = "ipfs")))]
-#[derive(Debug, argh::FromArgs)]
-#[argh(subcommand)]
-#[argh(name = "serve")]
-struct ServeArgs {
-    /// path to the registry to serve
-    #[argh(option)]
-    registry: Option<PathBuf>,
-
-    /// multiaddr to listen on (default: /ip4/0.0.0.0/tcp/0)
-    #[argh(option)]
-    listen: Option<String>,
-}
-
 /// Serve the registry over HTTP and IPFS
-#[cfg(feature = "ipfs")]
 #[derive(Debug, argh::FromArgs)]
 #[argh(subcommand)]
 #[argh(name = "serve")]
@@ -265,9 +242,6 @@ fn main() -> Result<(), Error> {
         Subcommand::List(list) => do_list(global, list)?,
         Subcommand::Verify(verify) => do_verify(global, verify)?,
         Subcommand::GenerateHtml(html) => do_generate_html(global, html)?,
-        #[cfg(all(feature = "p2p", not(feature = "ipfs")))]
-        Subcommand::Serve(serve) => do_serve(global, serve)?,
-        #[cfg(feature = "ipfs")]
         Subcommand::Serve(serve) => do_serve_ipfs(global, serve)?,
         #[cfg(feature = "ipfs")]
         Subcommand::Sync(sync) => do_sync_ipfs(global, sync)?,
@@ -319,13 +293,6 @@ enum Error {
     Yank {
         #[snafu(source(from(YankError, Box::new)))]
         source: Box<YankError>,
-    },
-
-    #[cfg(feature = "p2p")]
-    #[snafu(transparent)]
-    Serve {
-        #[snafu(source(from(ServeError, Box::new)))]
-        source: Box<ServeError>,
     },
 
     #[cfg(feature = "ipfs")]
@@ -639,47 +606,6 @@ fn do_list(_global: &Global, list: ListArgs) -> Result<(), Error> {
     }
 
     Ok(())
-}
-
-#[cfg(feature = "p2p")]
-fn do_serve(_global: &Global, serve: ServeArgs) -> Result<(), Error> {
-    use libp2p::Multiaddr;
-
-    let r = discover_registry(serve.registry)?;
-
-    let default_addr = "/ip4/0.0.0.0/tcp/0";
-    let addr_str = serve.listen.as_deref().unwrap_or(default_addr);
-
-    let listen_addr: Multiaddr = addr_str.parse().map_err(|e| ServeError::ParseListenAddr {
-        source: e,
-        addr: addr_str.to_owned(),
-    })?;
-
-    let rt = tokio::runtime::Runtime::new().map_err(|source| ServeError::Runtime { source })?;
-
-    rt.block_on(p2p::start_node(listen_addr, r.path))
-        .map_err(ServeError::from)?;
-
-    Ok(())
-}
-
-#[cfg(feature = "p2p")]
-#[derive(Debug, Snafu)]
-enum ServeError {
-    #[snafu(display("Could not parse listen address `{addr}`"))]
-    ParseListenAddr {
-        source: libp2p::multiaddr::Error,
-        addr: String,
-    },
-
-    #[snafu(display("Could not create the async runtime"))]
-    Runtime { source: io::Error },
-
-    #[snafu(transparent)]
-    Open { source: DiscoverRegistryError },
-
-    #[snafu(transparent)]
-    P2p { source: p2p::P2pError },
 }
 
 #[cfg(feature = "ipfs")]
