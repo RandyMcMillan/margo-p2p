@@ -15,6 +15,7 @@ COPY web/ ./
 # Build with registry files embedded
 ARG REPO_ROOT=/registry
 ENV REPO_ROOT=${REPO_ROOT}
+RUN mkdir -p /registry
 RUN npm run build -- --outDir /app/dist --emptyOutDir
 
 # ── Stage 2: Serve with nginx ──────────────────────────────────────
