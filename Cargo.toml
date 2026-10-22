@@ -14,7 +14,9 @@ default = ["html", "ipfs"]
 
 html = ["dep:maud", "dep:indoc"]
 ipfs = ["dep:kubo-ffi"]
-blossom = ["dep:blossom-rs", "dep:tokio", "dep:reqwest", "dep:tower-http", "dep:axum"]
+blossom-client = ["dep:blossom-rs", "dep:reqwest", "dep:tokio"]
+blossom-server = ["dep:blossom-rs", "dep:axum", "dep:tower-http", "dep:tokio", "ipfs"]
+blossom = ["blossom-client", "blossom-server"]
 
 [workspace]
 members = [

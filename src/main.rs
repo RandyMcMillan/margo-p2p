@@ -18,10 +18,10 @@ mod html;
 #[cfg(feature = "ipfs")]
 use kubo_ffi as _;
 
-#[cfg(feature = "blossom")]
+#[cfg(feature = "blossom-client")]
 use blossom_rs as _;
 
-#[cfg(feature = "blossom")]
+#[cfg(feature = "blossom-client")]
 use tokio as _;
 
 #[derive(Debug, argh::FromArgs)]
@@ -41,6 +41,7 @@ enum Subcommand {
     List(ListArgs),
     Verify(VerifyArgs),
     GenerateHtml(GenerateHtmlArgs),
+    #[cfg(any(feature = "ipfs", feature = "blossom-server"))]
     Serve(ServeArgs),
     #[cfg(feature = "ipfs")]
     Sync(SyncArgs),
@@ -90,12 +91,12 @@ struct AddArgs {
     ipfs: bool,
 
     /// store the crate as a local Blossom blob (in .blossom-blobs/)
-    #[cfg(feature = "blossom")]
+    #[cfg(feature = "blossom-client")]
     #[argh(switch)]
     blossom: bool,
 
     /// upload the crate to a remote Blossom server URL
-    #[cfg(feature = "blossom")]
+    #[cfg(feature = "blossom-client")]
     #[argh(option)]
     blossom_server: Option<String>,
 
@@ -132,6 +133,7 @@ struct GenerateHtmlArgs {
 }
 
 /// Serve the registry over HTTP and IPFS
+#[cfg(any(feature = "ipfs", feature = "blossom-server"))]
 #[derive(Debug, argh::FromArgs)]
 #[argh(subcommand)]
 #[argh(name = "serve")]
@@ -157,7 +159,7 @@ struct ServeArgs {
     publish: bool,
 
     /// also serve blobs via an embedded Blossom server
-    #[cfg(feature = "blossom")]
+    #[cfg(feature = "blossom-server")]
     #[argh(switch)]
     blossom: bool,
 }
@@ -242,6 +244,7 @@ fn main() -> Result<(), Error> {
         Subcommand::List(list) => do_list(global, list)?,
         Subcommand::Verify(verify) => do_verify(global, verify)?,
         Subcommand::GenerateHtml(html) => do_generate_html(global, html)?,
+        #[cfg(any(feature = "ipfs", feature = "blossom-server"))]
         Subcommand::Serve(serve) => do_serve_ipfs(global, serve)?,
         #[cfg(feature = "ipfs")]
         Subcommand::Sync(sync) => do_sync_ipfs(global, sync)?,
@@ -452,7 +455,7 @@ fn do_add(global: &Global, add: AddArgs) -> Result<(), Error> {
     let publish_ipfs = false;
 
     for i in add.path {
-        #[cfg(feature = "blossom")]
+        #[cfg(feature = "blossom-client")]
         r.add(
             global,
             i,
@@ -460,7 +463,7 @@ fn do_add(global: &Global, add: AddArgs) -> Result<(), Error> {
             add.blossom,
             add.blossom_server.clone(),
         )?;
-        #[cfg(not(feature = "blossom"))]
+        #[cfg(not(feature = "blossom-client"))]
         r.add(global, i, publish_ipfs, false, None)?;
     }
     r.maybe_generate_html()?;
@@ -747,7 +750,7 @@ fn do_serve_ipfs(_global: &Global, serve: ServeArgs) -> Result<(), Error> {
     println!("  peer id:  {}", node.peer_id().unwrap_or_default());
 
     // 6. optionally start an embedded Blossom server
-    #[cfg(feature = "blossom")]
+    #[cfg(feature = "blossom-server")]
     if serve.blossom {
         let blossom_port = 3000u16;
         let blobs_dir = r.path.join(".blossom-blobs");
@@ -1228,7 +1231,7 @@ impl Registry {
             // node dropped here; repo + pin persist on disk
         }
 
-        #[cfg(feature = "blossom")]
+        #[cfg(feature = "blossom-client")]
         if blossom_local {
             // Store blob locally in .blossom-blobs/<sha256>
             use sha2::Digest;
@@ -1243,7 +1246,7 @@ impl Registry {
             index_entry.blossom_url = Some(format!("http://localhost:3000/{}", sha256));
         }
 
-        #[cfg(feature = "blossom")]
+        #[cfg(feature = "blossom-client")]
         if let Some(server_url) = &blossom_server {
             let url = format!("{}/upload", server_url.trim_end_matches('/'));
             let rt = tokio::runtime::Runtime::new().map_err(|e| AddError::Blossom {
@@ -1588,7 +1591,7 @@ enum AddError {
     #[snafu(display("IPFS publish failed: {reason}"))]
     Ipfs { reason: String },
 
-    #[cfg(feature = "blossom")]
+    #[cfg(feature = "blossom-client")]
     #[snafu(display("Blossom publish failed: {reason}"))]
     Blossom { reason: String },
 }
