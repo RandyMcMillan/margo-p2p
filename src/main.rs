@@ -72,6 +72,10 @@ struct InitArgs {
     #[argh(option)]
     html_suggested_registry_name: Option<String>,
 
+    /// path to a swarm.key file for private IPFS swarm (optional)
+    #[argh(option)]
+    swarm_key: Option<PathBuf>,
+
     #[argh(positional)]
     path: PathBuf,
 }
@@ -162,6 +166,10 @@ struct ServeArgs {
     #[cfg(feature = "blossom-server")]
     #[argh(switch)]
     blossom: bool,
+
+    /// path to a swarm.key file for private IPFS swarm (optional)
+    #[argh(option)]
+    swarm_key: Option<PathBuf>,
 }
 
 /// Yank a version of a crate from the registry
@@ -347,6 +355,17 @@ impl<T> UnwrapOrDialog<T> for Option<T> {
     }
 }
 
+fn store_swarm_key_if_provided(swarm_key: Option<&PathBuf>, registry_path: &std::path::Path) {
+    if let Some(sk) = swarm_key {
+        let dest = registry_path.join(".swarm-key");
+        if let Err(e) = std::fs::copy(sk, &dest) {
+            eprintln!("Warning: could not store swarm key: {}", e);
+        } else {
+            println!("Stored swarm key at {}", dest.display());
+        }
+    }
+}
+
 fn do_init(_global: &Global, init: InitArgs) -> Result<(), DoInitializeError> {
     use do_initialize_error::*;
 
@@ -414,6 +433,9 @@ fn do_init(_global: &Global, init: InitArgs) -> Result<(), DoInitializeError> {
     };
 
     let r = Registry::initialize(config, &init.path)?;
+
+    // Store swarm key if provided (for private IPFS swarm)
+    store_swarm_key_if_provided(init.swarm_key.as_ref(), &r.path);
 
     if r.config.html.enabled {
         let res = r.generate_html();
@@ -664,7 +686,29 @@ fn do_serve_ipfs(_global: &Global, serve: ServeArgs) -> Result<(), Error> {
     // 1. init repo (reuse .ipfs-repo if it exists from `margo add --ipfs`)
     let repo_path = r.path.join(".ipfs-repo");
     if !repo_path.exists() {
-        if serve.networked {
+        // Check for swarm key: from --swarm-key flag or .swarm-key file
+        let swarm_key_path = serve.swarm_key.clone().or_else(|| {
+            let p = r.path.join(".swarm-key");
+            if p.exists() {
+                Some(p)
+            } else {
+                None
+            }
+        });
+
+        if let Some(sk_path) = &swarm_key_path {
+            let key_content =
+                std::fs::read_to_string(sk_path).map_err(|e| IpfsServeError::Init {
+                    reason: e.to_string(),
+                })?;
+            let config = format!(r#"{{"Swarm":{{"Key":"{}"}}}}"#, key_content.trim());
+            kubo_ffi::init_repo_with_config(&repo_path.to_string_lossy(), &config)
+                .map_err(|e| IpfsServeError::Init { reason: e })?;
+            println!(
+                "Private swarm mode: using swarm key from {}",
+                sk_path.display()
+            );
+        } else if serve.networked {
             kubo_ffi::init_repo_networked(&repo_path.to_string_lossy())
                 .map_err(|e| IpfsServeError::Init { reason: e })?;
         } else {
