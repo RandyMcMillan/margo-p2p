@@ -17,6 +17,7 @@ ipfs = ["dep:kubo-ffi"]
 blossom-client = ["dep:blossom-rs", "dep:reqwest", "dep:tokio"]
 blossom-server = ["dep:blossom-rs", "dep:axum", "dep:tower-http", "dep:tokio", "ipfs"]
 blossom = ["blossom-client", "blossom-server"]
+grasp = ["dep:blossom-nip34", "dep:axum", "dep:tokio"]
 
 [workspace]
 members = [
@@ -52,6 +53,7 @@ indoc = { version = "2.0.5", default-features = false, optional = true }
 
 kubo-ffi = { path = "kubo/ffi/rust", optional = true }
 blossom-rs = { version = "0.6", default-features = false, features = ["client", "server", "filesystem"], optional = true }
+blossom-nip34 = { version = "0.6", optional = true }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"], optional = true }
 tower-http = { version = "0.6", features = ["fs"], optional = true }
 axum = { version = "0.8", optional = true }

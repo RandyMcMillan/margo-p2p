@@ -24,6 +24,9 @@ use blossom_rs as _;
 #[cfg(feature = "blossom-client")]
 use tokio as _;
 
+#[cfg(feature = "grasp")]
+use blossom_nip34 as _;
+
 #[derive(Debug, argh::FromArgs)]
 /// Manage a static crate registry
 struct Args {
@@ -83,6 +86,15 @@ struct InitArgs {
 
     #[argh(positional)]
     path: PathBuf,
+
+    /// initialize the registry as a git repository
+    #[argh(switch)]
+    git: bool,
+
+    /// generate and store a Nostr keypair for GRASP publishing
+    #[cfg(feature = "ipfs")]
+    #[argh(switch)]
+    nostr_key: bool,
 }
 
 /// Add a crate to the registry
@@ -172,6 +184,11 @@ struct ServeArgs {
     #[argh(switch)]
     blossom: bool,
 
+    /// also serve a GRASP (NIP-34) git relay for the registry
+    #[cfg(feature = "grasp")]
+    #[argh(switch)]
+    grasp: bool,
+
     /// path to a swarm.key file for private IPFS swarm (optional)
     #[argh(option)]
     swarm_key: Option<PathBuf>,
@@ -250,6 +267,21 @@ struct SyncArgs {
     #[cfg(feature = "ipfs")]
     #[argh(option)]
     git: Option<String>,
+
+    /// GRASP relay URL to sync from (Nostr-authorized git)
+    #[cfg(feature = "grasp")]
+    #[argh(option)]
+    grasp: Option<String>,
+
+    /// npub of the repository owner on the GRASP relay
+    #[cfg(feature = "grasp")]
+    #[argh(option)]
+    grasp_npub: Option<String>,
+
+    /// repository name on the GRASP relay
+    #[cfg(feature = "grasp")]
+    #[argh(option)]
+    grasp_repo: Option<String>,
 }
 
 #[snafu::report]
@@ -460,6 +492,49 @@ fn do_init(_global: &Global, init: InitArgs) -> Result<(), DoInitializeError> {
                 );
             }
             Err(e) => eprintln!("Warning: could not derive swarm key: {}", e),
+        }
+    }
+
+    // Initialize as git repo if requested
+    if init.git {
+        let status = std::process::Command::new("git")
+            .args(["init"])
+            .current_dir(&r.path)
+            .status();
+        match status {
+            Ok(s) if s.success() => {
+                let _ = std::process::Command::new("git")
+                    .args(["config", "user.email", "margo@localhost"])
+                    .current_dir(&r.path)
+                    .status();
+                let _ = std::process::Command::new("git")
+                    .args(["config", "user.name", "margo"])
+                    .current_dir(&r.path)
+                    .status();
+                let _ = std::process::Command::new("git")
+                    .args(["add", "-A"])
+                    .current_dir(&r.path)
+                    .status();
+                let _ = std::process::Command::new("git")
+                    .args(["commit", "-m", "initial registry"])
+                    .current_dir(&r.path)
+                    .status();
+                println!("Initialized git repository in {}", r.path.display());
+            }
+            _ => eprintln!("Warning: git init failed"),
+        }
+    }
+
+    // Generate and store Nostr keypair for GRASP if requested
+    #[cfg(feature = "ipfs")]
+    if init.nostr_key {
+        match kubo_ffi::swarm_key_generate() {
+            Ok(key) => {
+                let dest = r.path.join(".nostr-key");
+                std::fs::write(&dest, &key).ok();
+                println!("Generated Nostr key, stored at {}", dest.display());
+            }
+            Err(e) => eprintln!("Warning: could not generate Nostr key: {}", e),
         }
     }
 
@@ -874,6 +949,78 @@ fn do_serve_ipfs(_global: &Global, serve: ServeArgs) -> Result<(), Error> {
         });
     }
 
+    // 6b. optionally start a GRASP (NIP-34) git relay
+    #[cfg(feature = "grasp")]
+    if serve.grasp {
+        let grasp_port = 8080u16;
+        let repos_dir = r.path.join(".grasp-repos");
+        let db_dir = r.path.join(".grasp-db");
+        std::fs::create_dir_all(&repos_dir).ok();
+        std::fs::create_dir_all(&db_dir).ok();
+
+        // Load or generate Nostr keypair
+        let key_path = r.path.join(".nostr-key");
+        let nsec = if key_path.exists() {
+            std::fs::read_to_string(&key_path)
+                .unwrap_or_default()
+                .trim()
+                .to_string()
+        } else {
+            let key = kubo_ffi::nostr_generate_key().unwrap_or_default();
+            std::fs::write(&key_path, &key).ok();
+            key
+        };
+        let npub = kubo_ffi::nostr_get_public_key(&nsec).unwrap_or_else(|_| "unknown".to_string());
+        println!("Nostr pubkey: {}", npub);
+
+        // Create a bare clone of the registry git repo if it's a git repo
+        let git_dir = r.path.join(".git");
+        if git_dir.exists() {
+            let bare_repo = repos_dir.join(&npub).join("registry.git");
+            if !bare_repo.exists() {
+                std::fs::create_dir_all(bare_repo.parent().unwrap()).ok();
+                let _ = std::process::Command::new("git")
+                    .args([
+                        "clone",
+                        "--bare",
+                        &r.path.to_string_lossy(),
+                        &bare_repo.to_string_lossy(),
+                    ])
+                    .status();
+            }
+        }
+
+        let config = blossom_nip34::Nip34Config {
+            domain: "localhost".into(),
+            server_url: format!("http://localhost:{}", grasp_port),
+            lmdb_path: db_dir,
+            repos_path: repos_dir,
+            git_path: "git".into(),
+            ..Default::default()
+        };
+
+        let router = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(blossom_nip34::build_nip34_router(config))
+            .expect("failed to build GRASP router");
+
+        let addr = format!("0.0.0.0:{}", grasp_port);
+        println!("GRASP relay listening on http://0.0.0.0:{}", grasp_port);
+        println!("  npub: {}", npub);
+        println!(
+            "  clone URL: http://localhost:{}/{}/registry.git",
+            grasp_port, npub
+        );
+
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(async {
+                let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
+                axum::serve(listener, router).await.unwrap();
+            });
+        });
+    }
+
     // 7. block forever (Ctrl-C to exit)
     loop {
         std::thread::sleep(std::time::Duration::from_secs(3600));
@@ -901,6 +1048,168 @@ fn do_sync_ipfs(_global: &Global, sync: SyncArgs) -> Result<(), Error> {
     use kubo_ffi::Node;
 
     let r = discover_registry(sync.registry)?;
+
+    // 0a. GRASP sync path (Nostr-authorized git relay)
+    #[cfg(feature = "grasp")]
+    if let Some(relay_url) = &sync.grasp {
+        let npub = sync.grasp_npub.as_deref().unwrap_or("");
+        let repo = sync.grasp_repo.as_deref().unwrap_or("registry");
+        let clone_url = format!("{}/{}/{}.git", relay_url.trim_end_matches('/'), npub, repo);
+        println!("Syncing from GRASP relay: {}", clone_url);
+
+        let tmp_dir = std::env::temp_dir().join(format!("margo-grasp-sync-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+
+        let status = std::process::Command::new("git")
+            .args([
+                "clone",
+                "--depth",
+                "1",
+                &clone_url,
+                &tmp_dir.to_string_lossy(),
+            ])
+            .status()
+            .map_err(|e| SyncError::GitClone {
+                reason: e.to_string(),
+            })?;
+        if !status.success() {
+            return Err(SyncError::GitClone {
+                reason: "git clone from GRASP relay failed".to_string(),
+            }
+            .into());
+        }
+
+        // Find the registry dir in the clone
+        let src_dir = if tmp_dir.join("config.json").exists() {
+            tmp_dir.clone()
+        } else {
+            std::fs::read_dir(&tmp_dir)
+                .ok()
+                .and_then(|mut entries| {
+                    entries.find_map(|e| {
+                        let p = e.ok()?.path();
+                        if p.join("config.json").exists() {
+                            Some(p)
+                        } else {
+                            None
+                        }
+                    })
+                })
+                .unwrap_or(tmp_dir.clone())
+        };
+
+        println!("Syncing from: {}", src_dir.display());
+
+        // Merge (same logic as git sync)
+        let mut merged = 0usize;
+        let mut added = 0usize;
+        for entry in walkdir::WalkDir::new(&src_dir)
+            .into_iter()
+            .filter_map(|e| e.ok())
+        {
+            let path = entry.path();
+            if !path.is_file() {
+                continue;
+            }
+            let rel = path.strip_prefix(&src_dir).unwrap_or(path);
+            let rel_str = rel.to_string_lossy();
+            if rel_str == "config.json"
+                || rel_str.starts_with("crates/")
+                || rel_str.ends_with(".crate")
+            {
+                if rel_str.ends_with(".crate") {
+                    let dest = r.path.join(&*rel_str);
+                    if let Some(parent) = dest.parent() {
+                        std::fs::create_dir_all(parent).ok();
+                    }
+                    if !dest.exists() {
+                        std::fs::copy(path, &dest).ok();
+                    }
+                }
+                continue;
+            }
+            let contents = std::fs::read_to_string(path).unwrap_or_default();
+            for line in contents.lines() {
+                let line = line.trim();
+                if line.is_empty() {
+                    continue;
+                }
+                let remote_entry: serde_json::Value = match serde_json::from_str(line) {
+                    Ok(v) => v,
+                    Err(_) => continue,
+                };
+                let name_str = match remote_entry.get("name").and_then(|v| v.as_str()) {
+                    Some(n) => n,
+                    None => continue,
+                };
+                let name = match CrateName::try_from(name_str) {
+                    Ok(n) => n,
+                    Err(_) => continue,
+                };
+                let version_str = match remote_entry.get("vers").and_then(|v| v.as_str()) {
+                    Some(v) => v,
+                    None => continue,
+                };
+                let version: semver::Version = match version_str.parse() {
+                    Ok(v) => v,
+                    Err(_) => continue,
+                };
+
+                let index_path = r.index_file_path_for(&name);
+                let mut local_index: Index = if index_path.exists() {
+                    Registry::parse_index_file(&index_path).unwrap_or_default()
+                } else {
+                    Default::default()
+                };
+
+                let has_entry = local_index.contains_key(&version);
+                if has_entry {
+                    let ipfs_cid_missing = local_index.get(&version).unwrap().ipfs_cid.is_none();
+                    let blossom_url_missing =
+                        local_index.get(&version).unwrap().blossom_url.is_none();
+                    if ipfs_cid_missing {
+                        if let Some(cid) = remote_entry.get("ipfs_cid").and_then(|v| v.as_str()) {
+                            let mut updated = local_index.get(&version).unwrap().clone();
+                            updated.ipfs_cid = Some(cid.to_string());
+                            local_index.insert(version.clone(), updated);
+                            merged += 1;
+                        }
+                    }
+                    if blossom_url_missing {
+                        if let Some(url) = remote_entry.get("blossom_url").and_then(|v| v.as_str())
+                        {
+                            let mut updated = local_index.get(&version).unwrap().clone();
+                            updated.blossom_url = Some(url.to_string());
+                            local_index.insert(version.clone(), updated);
+                            merged += 1;
+                        }
+                    }
+                } else {
+                    if let Ok(entry) = serde_json::from_str::<index_entry::Root>(line) {
+                        local_index.insert(version.clone(), entry);
+                        added += 1;
+                    }
+                }
+
+                if let Some(parent) = index_path.parent() {
+                    std::fs::create_dir_all(parent).ok();
+                }
+                let lines_out: Vec<String> = local_index
+                    .values()
+                    .map(|e| serde_json::to_string(e).unwrap())
+                    .collect();
+                std::fs::write(
+                    &index_path,
+                    lines_out.join("\n") + if !lines_out.is_empty() { "\n" } else { "" },
+                )
+                .ok();
+            }
+        }
+
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+        println!("GRASP sync complete: {} added, {} merged", added, merged);
+        return Ok(());
+    }
 
     // 0. Git sync path (alternative to IPFS)
     #[cfg(feature = "ipfs")]
