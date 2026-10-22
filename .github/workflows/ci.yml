@@ -249,12 +249,12 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: ${{ matrix.rust }}
+          toolchain: '1.90'
 
       - name: Cache Rust
         uses: ./.github/actions/cargo-cache
         with:
-          key: build-ipfs-${{ matrix.rust }}
+          key: build-ipfs
 
       - name: Build code (ipfs feature)
         run: cargo build --features ipfs
@@ -277,7 +277,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: nightly
+          toolchain: '1.90'
           components: clippy
 
       - name: Cache Rust
