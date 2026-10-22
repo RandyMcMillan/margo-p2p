@@ -819,31 +819,27 @@ fn do_serve_ipfs(_global: &Global, serve: ServeArgs) -> Result<(), Error> {
             }
         });
 
-        if let Some(sk_path) = &swarm_key_path {
-            let key_content =
-                std::fs::read_to_string(sk_path).map_err(|e| IpfsServeError::Init {
-                    reason: e.to_string(),
-                })?;
-            let config = serde_json::json!({
-                "Swarm": {
-                    "Key": key_content.trim()
-                }
-            });
-            let config_str = serde_json::to_string(&config).map_err(|e| IpfsServeError::Init {
-                reason: e.to_string(),
-            })?;
-            kubo_ffi::init_repo_with_config(&repo_path.to_string_lossy(), &config_str)
-                .map_err(|e| IpfsServeError::Init { reason: e })?;
-            println!(
-                "Private swarm mode: using swarm key from {}",
-                sk_path.display()
-            );
-        } else if serve.networked {
+        // Init repo first
+        if serve.networked {
             kubo_ffi::init_repo_networked(&repo_path.to_string_lossy())
                 .map_err(|e| IpfsServeError::Init { reason: e })?;
         } else {
             kubo_ffi::init_repo(&repo_path.to_string_lossy())
                 .map_err(|e| IpfsServeError::Init { reason: e })?;
+        }
+
+        // Write swarm.key file to repo if available (Kubo reads it from file)
+        if let Some(sk_path) = &swarm_key_path {
+            let key_content =
+                std::fs::read_to_string(sk_path).map_err(|e| IpfsServeError::Init {
+                    reason: e.to_string(),
+                })?;
+            let dest = repo_path.join("swarm.key");
+            std::fs::write(&dest, key_content.trim()).ok();
+            println!(
+                "Private swarm mode: using swarm key from {}",
+                sk_path.display()
+            );
         }
     }
 
@@ -3172,16 +3168,11 @@ mod test {
         // Node A: init with swarm key
         let reg_a = tmp.join("regA");
         std::fs::create_dir_all(&reg_a).unwrap();
-        let config = format!(
-            r#"{{"Swarm":{{"Key":"{}"}}}}"#,
-            swarm_key.trim().replace('\n', "\\n")
-        );
-        // Use proper JSON
-        let config_json = serde_json::json!({"Swarm": {"Key": swarm_key.trim()}});
-        let config_str = serde_json::to_string(&config_json).unwrap();
-        kubo_ffi::init_repo_with_config(&reg_a.join(".ipfs-repo").to_string_lossy(), &config_str)
-            .unwrap();
-        let node_a = Node::start(&reg_a.join(".ipfs-repo").to_string_lossy(), true).unwrap();
+        let repo_a = reg_a.join(".ipfs-repo");
+        kubo_ffi::init_repo(&repo_a.to_string_lossy()).unwrap();
+        // Write swarm key to repo directory (Kubo reads it from file)
+        std::fs::write(repo_a.join("swarm.key"), swarm_key.trim()).unwrap();
+        let node_a = Node::start(&repo_a.to_string_lossy(), true).unwrap();
         let peer_id_a = node_a.peer_id().unwrap();
         let addr_a = node_a
             .listening_addrs()
@@ -3195,9 +3186,10 @@ mod test {
         // Node B: same swarm key → should connect
         let reg_b = tmp.join("regB");
         std::fs::create_dir_all(&reg_b).unwrap();
-        kubo_ffi::init_repo_with_config(&reg_b.join(".ipfs-repo").to_string_lossy(), &config_str)
-            .unwrap();
-        let node_b = Node::start(&reg_b.join(".ipfs-repo").to_string_lossy(), true).unwrap();
+        let repo_b = reg_b.join(".ipfs-repo");
+        kubo_ffi::init_repo(&repo_b.to_string_lossy()).unwrap();
+        std::fs::write(repo_b.join("swarm.key"), swarm_key.trim()).unwrap();
+        let node_b = Node::start(&repo_b.to_string_lossy(), true).unwrap();
 
         let dial_addr = format!("{}/p2p/{}", addr_a, peer_id_a);
         let connected = node_b.connect(&dial_addr);

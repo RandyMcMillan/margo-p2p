@@ -1905,6 +1905,11 @@ dependencies = [
 ]
 
 [[package]]
+name = "kubo-ffi"
+version = "0.2.0"
+source = "git+https://github.com/RandyMcMillan/kubo?tag=v0.43.1-ffi.3#26218ce121ae0003350b88076696f19f6011ecd1"
+
+[[package]]
 name = "lab"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2025,7 +2030,7 @@ dependencies = [
 
 [[package]]
 name = "margo"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "argh",
  "ascii",
@@ -2038,7 +2043,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "indoc",
- "kubo-ffi",
+ "kubo-ffi 0.2.0 (git+https://github.com/RandyMcMillan/kubo?tag=v0.43.1-ffi.3)",
  "maud",
  "registry-conformance",
  "reqwest 0.12.28",
