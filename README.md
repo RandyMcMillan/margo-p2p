@@ -95,6 +95,12 @@ margo verify --registry my-registry-directory
 # Sync a local registry with a remote one via IPFS
 margo sync --registry my-registry-directory --cid Qm...rootCID...
 margo sync --registry my-registry-directory --ipns k51qzi5uqu5d...
+
+# Sync via git (clone + merge)
+margo sync --registry my-registry-directory --git https://github.com/org/registry.git
+
+# Sync via GRASP (Nostr-authorized git relay)
+margo sync --registry my-registry-directory --grasp http://relay:8080 --grasp-npub npub1... --grasp-repo registry
 ```
 
 For public-network participation, use `--networked` (enables mDNS, QUIC,
@@ -109,7 +115,7 @@ margo serve --registry my-registry-directory --networked
 For registries with `auth_required: true`, use a private IPFS swarm to
 ensure only authorized peers can access crate content:
 
-```bash
+````bash
 # Generate a swarm key
 ipfs swarm key gen > swarm.key
 
@@ -118,7 +124,12 @@ margo init my-registry-directory --base-url https://my-registry.example.com --sw
 
 # Serve with the swarm key
 margo serve --registry my-registry-directory --swarm-key swarm.key --networked
-```
+
+# Serve with a private swarm derived from a Nostr key
+margo serve --registry my-registry-directory --swarm-key-nsec nsec1...
+
+# Serve with a GRASP (NIP-34) git relay
+margo serve --registry my-registry-directory --grasp
 
 Only peers possessing the same `swarm.key` can connect and fetch crates.
 Combine with a reverse proxy (nginx/Caddy) for HTTP-level authentication.
@@ -128,7 +139,7 @@ The `ipfs` feature depends on a vendored copy of the [Kubo][kubo] FFI
 
 ```bash
 cargo build --no-default-features --features "html"
-```
+````
 
 [kubo]: https://github.com/ipfs/kubo
 
