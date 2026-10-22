@@ -3156,6 +3156,119 @@ mod test {
 
     #[cfg(feature = "ipfs")]
     #[tokio::test]
+    async fn ipfs_private_swarm() {
+        println!("=== IPFS private swarm test ===");
+        use kubo_ffi::Node;
+        use sha2::Digest;
+
+        let tmp = std::env::temp_dir().join("margo-swarm-test");
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+
+        // Generate a swarm key via FFI
+        let swarm_key = kubo_ffi::swarm_key_generate().unwrap();
+        println!("swarm key: {}", swarm_key.lines().last().unwrap());
+
+        // Node A: init with swarm key
+        let reg_a = tmp.join("regA");
+        std::fs::create_dir_all(&reg_a).unwrap();
+        let config = format!(
+            r#"{{"Swarm":{{"Key":"{}"}}}}"#,
+            swarm_key.trim().replace('\n', "\\n")
+        );
+        // Use proper JSON
+        let config_json = serde_json::json!({"Swarm": {"Key": swarm_key.trim()}});
+        let config_str = serde_json::to_string(&config_json).unwrap();
+        kubo_ffi::init_repo_with_config(&reg_a.join(".ipfs-repo").to_string_lossy(), &config_str)
+            .unwrap();
+        let node_a = Node::start(&reg_a.join(".ipfs-repo").to_string_lossy(), true).unwrap();
+        let peer_id_a = node_a.peer_id().unwrap();
+        let addr_a = node_a
+            .listening_addrs()
+            .unwrap()
+            .lines()
+            .next()
+            .unwrap()
+            .to_string();
+        println!("Node A: peer_id={}, addr={}", peer_id_a, addr_a);
+
+        // Node B: same swarm key → should connect
+        let reg_b = tmp.join("regB");
+        std::fs::create_dir_all(&reg_b).unwrap();
+        kubo_ffi::init_repo_with_config(&reg_b.join(".ipfs-repo").to_string_lossy(), &config_str)
+            .unwrap();
+        let node_b = Node::start(&reg_b.join(".ipfs-repo").to_string_lossy(), true).unwrap();
+
+        let dial_addr = format!("{}/p2p/{}", addr_a, peer_id_a);
+        let connected = node_b.connect(&dial_addr);
+        println!("Node B (same key) connect: {}", connected);
+        assert!(connected, "Nodes with same swarm key must connect");
+
+        // Publish and fetch
+        let data = b"private swarm content";
+        let cid = node_a.unixfs_add_bytes(data).unwrap();
+        let fetched = node_b.unixfs_cat(&cid).unwrap();
+        assert_eq!(fetched, data);
+        println!(
+            "Node B fetched {} bytes from private swarm: OK",
+            fetched.len()
+        );
+
+        drop(node_a);
+        drop(node_b);
+        let _ = std::fs::remove_dir_all(&tmp);
+        println!("=== IPFS private swarm test PASSED ===");
+    }
+
+    #[cfg(feature = "blossom")]
+    #[tokio::test]
+    async fn blossom_roundtrip() {
+        println!("=== Blossom round-trip test ===");
+        use blossom_rs::{BlobServer, FilesystemBackend};
+        use std::net::SocketAddr;
+
+        let tmp = std::env::temp_dir().join("margo-blossom-test");
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        let blobs_dir = tmp.join("blobs");
+        std::fs::create_dir_all(&blobs_dir).unwrap();
+
+        // Start a Blossom server
+        let backend = FilesystemBackend::new(&blobs_dir.to_string_lossy()).unwrap();
+        let server = BlobServer::new(backend, "http://127.0.0.1:3099");
+        let router = server.router();
+        let addr: SocketAddr = "127.0.0.1:3099".parse().unwrap();
+        let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
+        let handle = tokio::spawn(async move {
+            axum::serve(listener, router).await.unwrap();
+        });
+        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+
+        // Upload a blob
+        let data = b"blossom round-trip test data 12345";
+        let client = blossom_rs::BlossomClient::new(
+            vec!["http://127.0.0.1:3099".into()],
+            blossom_rs::Signer::generate(),
+        );
+        let desc = client
+            .upload(data, "application/octet-stream")
+            .await
+            .unwrap();
+        println!("uploaded: sha256={}", desc.sha256);
+        assert!(!desc.sha256.is_empty());
+
+        // Download it back
+        let fetched = client.download(&desc.sha256).await.unwrap();
+        assert_eq!(fetched, data, "downloaded bytes must match");
+        println!("downloaded: {} bytes, match OK", fetched.len());
+
+        handle.abort();
+        let _ = std::fs::remove_dir_all(&tmp);
+        println!("=== Blossom round-trip test PASSED ===");
+    }
+
+    #[cfg(feature = "ipfs")]
+    #[tokio::test]
     async fn ipfs_two_node_fetch() {
         println!("=== IPFS two-node fetch test ===");
         use kubo_ffi::Node;
