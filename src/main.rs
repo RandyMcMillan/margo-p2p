@@ -824,9 +824,14 @@ fn do_sync_ipfs(_global: &Global, sync: SyncArgs) -> Result<(), Error> {
         let status = std::process::Command::new("git")
             .args(["clone", "--depth", "1", git_url, &tmp_dir.to_string_lossy()])
             .status()
-            .map_err(|e| SyncError::GitClone { reason: e.to_string() })?;
+            .map_err(|e| SyncError::GitClone {
+                reason: e.to_string(),
+            })?;
         if !status.success() {
-            return Err(SyncError::GitClone { reason: "git clone failed".to_string() }.into());
+            return Err(SyncError::GitClone {
+                reason: "git clone failed".to_string(),
+            }
+            .into());
         }
 
         // The cloned repo might have the registry at root or in a subdirectory.
@@ -840,7 +845,11 @@ fn do_sync_ipfs(_global: &Global, sync: SyncArgs) -> Result<(), Error> {
                 .and_then(|mut entries| {
                     entries.find_map(|e| {
                         let p = e.ok()?.path();
-                        if p.join("config.json").exists() { Some(p) } else { None }
+                        if p.join("config.json").exists() {
+                            Some(p)
+                        } else {
+                            None
+                        }
                     })
                 })
                 .unwrap_or(tmp_dir.clone())
@@ -851,14 +860,20 @@ fn do_sync_ipfs(_global: &Global, sync: SyncArgs) -> Result<(), Error> {
         // Walk the cloned registry and merge
         let mut merged = 0usize;
         let mut added = 0usize;
-        for entry in walkdir::WalkDir::new(&src_dir).into_iter().filter_map(|e| e.ok()) {
+        for entry in walkdir::WalkDir::new(&src_dir)
+            .into_iter()
+            .filter_map(|e| e.ok())
+        {
             let path = entry.path();
             if !path.is_file() {
                 continue;
             }
             let rel = path.strip_prefix(&src_dir).unwrap_or(path);
             let rel_str = rel.to_string_lossy();
-            if rel_str == "config.json" || rel_str.starts_with("crates/") || rel_str.ends_with(".crate") {
+            if rel_str == "config.json"
+                || rel_str.starts_with("crates/")
+                || rel_str.ends_with(".crate")
+            {
                 // Copy crate files
                 if rel_str.ends_with(".crate") {
                     let dest = r.path.join(&*rel_str);
@@ -909,7 +924,8 @@ fn do_sync_ipfs(_global: &Global, sync: SyncArgs) -> Result<(), Error> {
                 let has_entry = local_index.contains_key(&version);
                 if has_entry {
                     let ipfs_cid_missing = local_index.get(&version).unwrap().ipfs_cid.is_none();
-                    let blossom_url_missing = local_index.get(&version).unwrap().blossom_url.is_none();
+                    let blossom_url_missing =
+                        local_index.get(&version).unwrap().blossom_url.is_none();
                     if ipfs_cid_missing {
                         if let Some(cid) = remote_entry.get("ipfs_cid").and_then(|v| v.as_str()) {
                             let mut updated = local_index.get(&version).unwrap().clone();
@@ -919,7 +935,8 @@ fn do_sync_ipfs(_global: &Global, sync: SyncArgs) -> Result<(), Error> {
                         }
                     }
                     if blossom_url_missing {
-                        if let Some(url) = remote_entry.get("blossom_url").and_then(|v| v.as_str()) {
+                        if let Some(url) = remote_entry.get("blossom_url").and_then(|v| v.as_str())
+                        {
                             let mut updated = local_index.get(&version).unwrap().clone();
                             updated.blossom_url = Some(url.to_string());
                             local_index.insert(version.clone(), updated);
@@ -936,8 +953,15 @@ fn do_sync_ipfs(_global: &Global, sync: SyncArgs) -> Result<(), Error> {
                 if let Some(parent) = index_path.parent() {
                     std::fs::create_dir_all(parent).ok();
                 }
-                let lines_out: Vec<String> = local_index.values().map(|e| serde_json::to_string(e).unwrap()).collect();
-                std::fs::write(&index_path, lines_out.join("\n") + if !lines_out.is_empty() { "\n" } else { "" }).ok();
+                let lines_out: Vec<String> = local_index
+                    .values()
+                    .map(|e| serde_json::to_string(e).unwrap())
+                    .collect();
+                std::fs::write(
+                    &index_path,
+                    lines_out.join("\n") + if !lines_out.is_empty() { "\n" } else { "" },
+                )
+                .ok();
             }
         }
 
