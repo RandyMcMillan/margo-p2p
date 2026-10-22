@@ -244,8 +244,10 @@ Phases 1–4 for the content-distribution and reachability concerns.
       registry over HTTP.
 - [ ] Document the P2P feature in the README: the `serve` command, the
       protocol, the git requirement, and the threat model.
-- [ ] Verify the MSRV (`rust-version = "1.81.0"`) against the `p2p` feature.
-      Every CI matrix entry except `nightly` is currently commented out.
+- [x] Verify the MSRV: updated `rust-version` to `1.90.0` (1.81.0 was too
+      old for transitive deps requiring edition2024). Verified build with
+      `rustup run 1.90.0 cargo build` (default + ipfs + blossom features).
+      CI ipfs jobs updated to use 1.90.
 - [x] Fix `margo --help`, which prints nothing. Enabled the `help` feature
       in argh (was disabled by `default-features = false`) and added doc
       comments to the `ServeArgs` structs. `margo --help` now prints full
