@@ -42,6 +42,8 @@ enum Subcommand {
     Serve(ServeArgs),
     #[cfg(feature = "ipfs")]
     Serve(ServeArgs),
+    #[cfg(feature = "ipfs")]
+    Sync(SyncArgs),
 }
 
 /// Initialize a new registry
@@ -202,6 +204,29 @@ struct VerifyArgs {
     registry: Option<PathBuf>,
 }
 
+/// Sync a local registry with a remote registry via IPFS
+#[cfg(feature = "ipfs")]
+#[derive(Debug, argh::FromArgs)]
+#[argh(subcommand)]
+#[argh(name = "sync")]
+struct SyncArgs {
+    /// path to the local registry to sync into
+    #[argh(option)]
+    registry: Option<PathBuf>,
+
+    /// root CID of the remote registry snapshot
+    #[argh(option)]
+    cid: Option<String>,
+
+    /// IPNS name to resolve to a root CID
+    #[argh(option)]
+    ipns: Option<String>,
+
+    /// peer multiaddr to dial (optional, for direct fetch)
+    #[argh(option)]
+    peer: Option<String>,
+}
+
 #[snafu::report]
 fn main() -> Result<(), Error> {
     let args: Args = argh::from_env();
@@ -221,6 +246,8 @@ fn main() -> Result<(), Error> {
         Subcommand::Serve(serve) => do_serve(global, serve)?,
         #[cfg(feature = "ipfs")]
         Subcommand::Serve(serve) => do_serve_ipfs(global, serve)?,
+        #[cfg(feature = "ipfs")]
+        Subcommand::Sync(sync) => do_sync_ipfs(global, sync)?,
     }
 
     Ok(())
@@ -283,6 +310,13 @@ enum Error {
     IpfsServe {
         #[snafu(source(from(IpfsServeError, Box::new)))]
         source: Box<IpfsServeError>,
+    },
+
+    #[cfg(feature = "ipfs")]
+    #[snafu(transparent)]
+    Sync {
+        #[snafu(source(from(SyncError, Box::new)))]
+        source: Box<SyncError>,
     },
 
     #[snafu(transparent)]
@@ -773,6 +807,270 @@ enum IpfsServeError {
 
     #[snafu(display("Could not start gateway: {reason}"))]
     Gateway { reason: String },
+}
+
+#[cfg(feature = "ipfs")]
+fn do_sync_ipfs(_global: &Global, sync: SyncArgs) -> Result<(), Error> {
+    use kubo_ffi::Node;
+
+    let r = discover_registry(sync.registry)?;
+
+    // 1. Init/reuse IPFS repo
+    let repo_path = r.path.join(".ipfs-repo");
+    if !repo_path.exists() {
+        kubo_ffi::init_repo(&repo_path.to_string_lossy())
+            .map_err(|e| SyncError::RepoInit { reason: e })?;
+    }
+    let node = Node::start(&repo_path.to_string_lossy(), true)
+        .map_err(|e| SyncError::NodeStartup { reason: e })?;
+
+    // 2. Dial peer if given
+    if let Some(peer) = &sync.peer {
+        if !node.connect(peer) {
+            eprintln!(
+                "warning: failed to connect to {}: {}",
+                peer,
+                kubo_ffi::last_error().unwrap_or_default()
+            );
+        } else {
+            println!("connected to {}", peer);
+        }
+    }
+
+    // 3. Resolve root CID
+    let root_cid = if let Some(cid) = &sync.cid {
+        cid.clone()
+    } else if let Some(ipns) = &sync.ipns {
+        let out = node
+            .run_on_node(&repo_path.to_string_lossy(), &["name", "resolve", ipns])
+            .map_err(|e| SyncError::Resolve { reason: e })?;
+        // Output is like "/ipfs/Qm..." or a struct dump; extract CID
+        let cid = extract_last_cid(&out).ok_or_else(|| SyncError::Resolve {
+            reason: format!("could not parse CID from: {}", out),
+        })?;
+        cid
+    } else {
+        return Err(SyncError::MissingCid.into());
+    };
+
+    println!("Syncing from root CID: {}", root_cid);
+
+    // 4. Fetch remote registry into a temp dir
+    let tmp_dir = std::env::temp_dir().join(format!("margo-sync-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp_dir);
+    std::fs::create_dir_all(&tmp_dir).map_err(|e| SyncError::Io {
+        reason: e.to_string(),
+    })?;
+
+    // Recursive fetcher: walks the IPFS DAG and writes files to tmp_dir
+    fn fetch_tree(
+        node: &Node,
+        repo_path: &str,
+        cid: &str,
+        prefix: &str,
+        base_dir: &std::path::Path,
+    ) -> Result<(), String> {
+        let ls_path = if prefix.is_empty() {
+            cid.to_string()
+        } else {
+            format!("{}/{}", cid, prefix)
+        };
+        let ls_arg = ls_path.clone();
+        let out = node.run_on_node(repo_path, &["ls", &ls_arg])?;
+        for line in out.lines() {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() < 3 {
+                continue;
+            }
+            let _entry_cid = parts[0];
+            let size = parts[1];
+            let name = parts[2];
+            let remote_path = if prefix.is_empty() {
+                name.to_string()
+            } else {
+                format!("{}/{}", prefix, name)
+            };
+            let local_path = base_dir.join(&remote_path);
+            if size == "-" {
+                // directory
+                std::fs::create_dir_all(&local_path).ok();
+                fetch_tree(node, repo_path, cid, &remote_path, base_dir)?;
+            } else {
+                // file
+                if let Some(parent) = local_path.parent() {
+                    std::fs::create_dir_all(parent).ok();
+                }
+                let ipfs_path = format!("/ipfs/{}/{}", cid, remote_path);
+                let bytes = node.unixfs_cat(&ipfs_path)?;
+                std::fs::write(&local_path, &bytes).map_err(|e| e.to_string())?;
+            }
+        }
+        Ok(())
+    }
+
+    fetch_tree(&node, &repo_path.to_string_lossy(), &root_cid, "", &tmp_dir)
+        .map_err(|e| SyncError::Fetch { reason: e })?;
+
+    println!("Fetched remote registry to {}", tmp_dir.display());
+
+    // 5. Parse remote index files and merge into local registry
+    // Walk the temp dir for index files (files without extension in prefix dirs)
+    let mut merged = 0usize;
+    let mut added = 0usize;
+    for entry in walkdir::WalkDir::new(&tmp_dir)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        // Skip config.json, .crate files, and files in crates/
+        let rel = path.strip_prefix(&tmp_dir).unwrap_or(path);
+        let rel_str = rel.to_string_lossy();
+        if rel_str == "config.json" || rel_str.starts_with("crates/") || rel_str.ends_with(".crate")
+        {
+            continue;
+        }
+        // This is an index file. Parse it.
+        let contents = std::fs::read_to_string(path).unwrap_or_default();
+        for line in contents.lines() {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            let remote_entry: serde_json::Value = match serde_json::from_str(line) {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            let name_str = match remote_entry.get("name").and_then(|v| v.as_str()) {
+                Some(n) => n,
+                None => continue,
+            };
+            let name = match CrateName::try_from(name_str) {
+                Ok(n) => n,
+                Err(_) => continue,
+            };
+            let version_str = match remote_entry.get("vers").and_then(|v| v.as_str()) {
+                Some(v) => v,
+                None => continue,
+            };
+            let version: semver::Version = match version_str.parse() {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+
+            // Read local index
+            let index_path = r.index_file_path_for(&name);
+            let mut local_index: Index = if index_path.exists() {
+                Registry::parse_index_file(&index_path).unwrap_or_default()
+            } else {
+                Default::default()
+            };
+
+            // Check if this version already exists locally
+            if let Some(local_entry) = local_index.get(&version) {
+                // Merge ipfs_cid if missing
+                if local_entry.ipfs_cid.is_none() {
+                    if let Some(cid) = remote_entry.get("ipfs_cid").and_then(|v| v.as_str()) {
+                        // Update the local entry
+                        let mut updated = local_entry.clone();
+                        updated.ipfs_cid = Some(cid.to_string());
+                        local_index.insert(version.clone(), updated);
+                        merged += 1;
+                    }
+                }
+            } else {
+                // New crate/version: fetch the .crate file if ipfs_cid is available
+                if let Some(_cid) = remote_entry.get("ipfs_cid").and_then(|v| v.as_str()) {
+                    let crate_path = r.crate_file_path_for(&name, &version);
+                    if !crate_path.exists() {
+                        if let Some(parent) = crate_path.parent() {
+                            std::fs::create_dir_all(parent).ok();
+                        }
+                        // Fetch from the remote registry's crate path
+                        let remote_crate_path = format!(
+                            "/ipfs/{}/crates/{}/{}.crate",
+                            root_cid,
+                            // Need prefix - compute from name
+                            {
+                                let n = name.len();
+                                if n <= 1 {
+                                    "1".to_string()
+                                } else if n == 2 {
+                                    "2".to_string()
+                                } else if n == 3 {
+                                    format!("3/{}", &name.as_str()[0..1])
+                                } else {
+                                    format!("{}/{}", &name.as_str()[0..2], &name.as_str()[2..4])
+                                }
+                            },
+                            version
+                        );
+                        if let Ok(bytes) = node.unixfs_cat(&remote_crate_path) {
+                            std::fs::write(&crate_path, &bytes).ok();
+                        }
+                    }
+                }
+                // Insert the remote entry into local index
+                // We need to deserialize into index_entry::Root
+                if let Ok(entry) = serde_json::from_str::<index_entry::Root>(line) {
+                    local_index.insert(version.clone(), entry);
+                    added += 1;
+                }
+            }
+
+            // Write the updated index file
+            if let Some(parent) = index_path.parent() {
+                std::fs::create_dir_all(parent).ok();
+            }
+            // Write all entries
+            let lines_out: Vec<String> = local_index
+                .values()
+                .map(|e| serde_json::to_string(e).unwrap())
+                .collect();
+            std::fs::write(
+                &index_path,
+                lines_out.join("\n") + if !lines_out.is_empty() { "\n" } else { "" },
+            )
+            .ok();
+        }
+    }
+
+    println!(
+        "Sync complete: {} added, {} merged (ipfs_cid)",
+        added, merged
+    );
+
+    // Cleanup temp dir
+    let _ = std::fs::remove_dir_all(&tmp_dir);
+
+    // Drop node
+    drop(node);
+
+    Ok(())
+}
+
+#[cfg(feature = "ipfs")]
+#[derive(Debug, Snafu)]
+enum SyncError {
+    #[snafu(display("Could not initialize kubo repo: {reason}"))]
+    RepoInit { reason: String },
+
+    #[snafu(display("Could not start kubo node: {reason}"))]
+    NodeStartup { reason: String },
+
+    #[snafu(display("Could not resolve IPNS name: {reason}"))]
+    Resolve { reason: String },
+
+    #[snafu(display("Root CID is required (--cid or --ipns)"))]
+    MissingCid,
+
+    #[snafu(display("Could not fetch remote registry: {reason}"))]
+    Fetch { reason: String },
+
+    #[snafu(display("IO error: {reason}"))]
+    Io { reason: String },
 }
 
 fn discover_registry(path: Option<PathBuf>) -> Result<Registry, DiscoverRegistryError> {
@@ -1725,7 +2023,7 @@ mod index_entry {
 
     use crate::common::{CrateName, RustVersion};
 
-    #[derive(Debug, Serialize, Deserialize)]
+    #[derive(Debug, Clone, Serialize, Deserialize)]
     pub struct Root {
         /// The name of the package.
         pub name: CrateName,
@@ -1807,7 +2105,7 @@ mod index_entry {
         pub ipfs_cid: Option<String>,
     }
 
-    #[derive(Debug, Serialize, Deserialize)]
+    #[derive(Debug, Clone, Serialize, Deserialize)]
     pub struct Dependency {
         /// Name of the dependency.
         ///
@@ -1860,7 +2158,7 @@ mod index_entry {
         pub package: Option<String>,
     }
 
-    #[derive(Debug, Serialize, Deserialize)]
+    #[derive(Debug, Clone, Serialize, Deserialize)]
     #[serde(rename_all = "snake_case")]
     pub enum DependencyKind {
         #[allow(unused)]
@@ -2011,7 +2309,7 @@ mod common {
         chr.is_alphanumeric() || chr == AsciiChar::UnderScore || chr == AsciiChar::Minus
     }
 
-    #[derive(Debug)]
+    #[derive(Debug, Clone)]
     pub struct RustVersion(Version);
 
     impl FromStr for RustVersion {
