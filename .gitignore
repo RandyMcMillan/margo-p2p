@@ -5,3 +5,5 @@
 /ui/dist
 
 kubo/
+blossom.db
+blossom_locks.db

@@ -21,6 +21,12 @@ mod p2p;
 #[cfg(feature = "ipfs")]
 use kubo_ffi as _;
 
+#[cfg(feature = "blossom")]
+use blossom_rs as _;
+
+#[cfg(feature = "blossom")]
+use tokio as _;
+
 #[derive(Debug, argh::FromArgs)]
 /// Manage a static crate registry
 struct Args {
@@ -88,6 +94,11 @@ struct AddArgs {
     #[cfg(feature = "ipfs")]
     #[argh(switch)]
     ipfs: bool,
+
+    /// upload the crate to a Blossom server and record the blob URL
+    #[cfg(feature = "blossom")]
+    #[argh(option)]
+    blossom: Option<String>,
 
     #[argh(positional)]
     path: Vec<PathBuf>,
@@ -454,6 +465,7 @@ enum DoInitializeError {
     Html { source: HtmlError },
 }
 
+#[allow(unused_variables)]
 fn do_add(global: &Global, add: AddArgs) -> Result<(), Error> {
     let r = discover_registry(add.registry)?;
 
@@ -463,7 +475,10 @@ fn do_add(global: &Global, add: AddArgs) -> Result<(), Error> {
     let publish_ipfs = false;
 
     for i in add.path {
-        r.add(global, i, publish_ipfs)?;
+        #[cfg(feature = "blossom")]
+        r.add(global, i, publish_ipfs, add.blossom.clone())?;
+        #[cfg(not(feature = "blossom"))]
+        r.add(global, i, publish_ipfs, None)?;
     }
     r.maybe_generate_html()?;
 
@@ -1180,11 +1195,13 @@ impl Registry {
     }
 
     #[cfg_attr(not(feature = "ipfs"), allow(unused_variables))]
+    #[cfg_attr(not(feature = "blossom"), allow(unused_variables))]
     fn add(
         &self,
         global: &Global,
         crate_path: impl AsRef<Path>,
         publish_ipfs: bool,
+        blossom_server: Option<String>,
     ) -> Result<(), AddError> {
         use add_error::*;
 
@@ -1235,6 +1252,50 @@ impl Registry {
             println!("Published to IPFS: {}", cid);
             index_entry.ipfs_cid = Some(cid);
             // node dropped here; repo + pin persist on disk
+        }
+
+        #[cfg(feature = "blossom")]
+        if let Some(server_url) = &blossom_server {
+            let url = format!("{}/upload", server_url.trim_end_matches('/'));
+            let rt = tokio::runtime::Runtime::new().map_err(|e| AddError::Blossom {
+                reason: e.to_string(),
+            })?;
+            let resp = rt
+                .block_on(async {
+                    reqwest::Client::new()
+                        .put(&url)
+                        .header("Content-Type", "application/gzip")
+                        .body(crate_file.clone())
+                        .send()
+                        .await
+                })
+                .map_err(|e| AddError::Blossom {
+                    reason: e.to_string(),
+                })?;
+            if !resp.status().is_success() {
+                return Err(AddError::Blossom {
+                    reason: format!("HTTP {}", resp.status()),
+                });
+            }
+            let text = rt.block_on(resp.text()).map_err(|e| AddError::Blossom {
+                reason: e.to_string(),
+            })?;
+            let body: serde_json::Value =
+                serde_json::from_str(&text).map_err(|e| AddError::Blossom {
+                    reason: e.to_string(),
+                })?;
+            let sha256 = body
+                .get("sha256")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let blob_url = body
+                .get("url")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| format!("{}/{}", server_url.trim_end_matches('/'), sha256));
+            println!("Published to Blossom: {} (sha256={})", blob_url, sha256);
+            index_entry.blossom_url = Some(blob_url);
         }
 
         let index_path = self.index_file_path_for(&index_entry.name);
@@ -1537,6 +1598,10 @@ enum AddError {
     #[cfg(feature = "ipfs")]
     #[snafu(display("IPFS publish failed: {reason}"))]
     Ipfs { reason: String },
+
+    #[cfg(feature = "blossom")]
+    #[snafu(display("Blossom publish failed: {reason}"))]
+    Blossom { reason: String },
 }
 
 #[derive(Debug, Snafu)]
@@ -1791,6 +1856,7 @@ fn adapt_cargo_toml_to_index_entry(
         features2: Default::default(),
         rust_version: cargo_toml.package.rust_version,
         ipfs_cid: None,
+        blossom_url: None,
     }
 }
 
@@ -2105,6 +2171,14 @@ mod index_entry {
         /// `dl` URL.
         #[serde(skip_serializing_if = "Option::is_none")]
         pub ipfs_cid: Option<String>,
+
+        /// Optional Blossom blob URL for the `.crate` file.
+        ///
+        /// Blossom provides content-addressed blob storage with Nostr auth.
+        /// When present, consumers can fetch the crate from this URL (with
+        /// Nostr BIP-340 authentication if required).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub blossom_url: Option<String>,
     }
 
     #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2409,8 +2483,8 @@ mod test {
             .unwrap();
         let p = c.package().await.unwrap();
 
-        r.add(&global, &p, false).unwrap();
-        r.add(&global, &p, false).unwrap();
+        r.add(&global, &p, false, None).unwrap();
+        r.add(&global, &p, false, None).unwrap();
 
         let name = CrateName::try_from(c.name()).unwrap();
         let index_file_path = r.index_file_path_for(&name);
@@ -2466,7 +2540,7 @@ mod test {
         let version = version.parse().unwrap();
         let crate_path = r.crate_file_path_for(&name, &version);
 
-        r.add(&global, p, false).unwrap();
+        r.add(&global, p, false, None).unwrap();
 
         assert!(
             crate_path.exists(),
@@ -2564,7 +2638,7 @@ mod test {
         let p = c.package().await.unwrap();
 
         println!("adding crate with --ipfs (publish to IPFS)...");
-        r.add(&global, &p, true).unwrap();
+        r.add(&global, &p, true, None).unwrap();
         println!("add done");
 
         let name = CrateName::try_from(c.name()).unwrap();
