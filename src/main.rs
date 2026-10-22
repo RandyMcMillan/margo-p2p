@@ -227,6 +227,11 @@ struct SyncArgs {
     /// peer multiaddr to dial (optional, for direct fetch)
     #[argh(option)]
     peer: Option<String>,
+
+    /// git remote URL to sync from (alternative to IPFS)
+    #[cfg(feature = "ipfs")]
+    #[argh(option)]
+    git: Option<String>,
 }
 
 #[snafu::report]
@@ -808,6 +813,139 @@ fn do_sync_ipfs(_global: &Global, sync: SyncArgs) -> Result<(), Error> {
 
     let r = discover_registry(sync.registry)?;
 
+    // 0. Git sync path (alternative to IPFS)
+    #[cfg(feature = "ipfs")]
+    if let Some(git_url) = &sync.git {
+        println!("Syncing from git remote: {}", git_url);
+        let tmp_dir = std::env::temp_dir().join(format!("margo-git-sync-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+
+        // Clone the remote repo
+        let status = std::process::Command::new("git")
+            .args(["clone", "--depth", "1", git_url, &tmp_dir.to_string_lossy()])
+            .status()
+            .map_err(|e| SyncError::GitClone { reason: e.to_string() })?;
+        if !status.success() {
+            return Err(SyncError::GitClone { reason: "git clone failed".to_string() }.into());
+        }
+
+        // The cloned repo might have the registry at root or in a subdirectory.
+        // Try root first, then look for config.json.
+        let src_dir = if tmp_dir.join("config.json").exists() {
+            tmp_dir.clone()
+        } else {
+            // Look one level deep
+            std::fs::read_dir(&tmp_dir)
+                .ok()
+                .and_then(|mut entries| {
+                    entries.find_map(|e| {
+                        let p = e.ok()?.path();
+                        if p.join("config.json").exists() { Some(p) } else { None }
+                    })
+                })
+                .unwrap_or(tmp_dir.clone())
+        };
+
+        println!("Syncing from: {}", src_dir.display());
+
+        // Walk the cloned registry and merge
+        let mut merged = 0usize;
+        let mut added = 0usize;
+        for entry in walkdir::WalkDir::new(&src_dir).into_iter().filter_map(|e| e.ok()) {
+            let path = entry.path();
+            if !path.is_file() {
+                continue;
+            }
+            let rel = path.strip_prefix(&src_dir).unwrap_or(path);
+            let rel_str = rel.to_string_lossy();
+            if rel_str == "config.json" || rel_str.starts_with("crates/") || rel_str.ends_with(".crate") {
+                // Copy crate files
+                if rel_str.ends_with(".crate") {
+                    let dest = r.path.join(&*rel_str);
+                    if let Some(parent) = dest.parent() {
+                        std::fs::create_dir_all(parent).ok();
+                    }
+                    if !dest.exists() {
+                        std::fs::copy(path, &dest).ok();
+                    }
+                }
+                continue;
+            }
+            // Index file: parse and merge
+            let contents = std::fs::read_to_string(path).unwrap_or_default();
+            for line in contents.lines() {
+                let line = line.trim();
+                if line.is_empty() {
+                    continue;
+                }
+                let remote_entry: serde_json::Value = match serde_json::from_str(line) {
+                    Ok(v) => v,
+                    Err(_) => continue,
+                };
+                let name_str = match remote_entry.get("name").and_then(|v| v.as_str()) {
+                    Some(n) => n,
+                    None => continue,
+                };
+                let name = match CrateName::try_from(name_str) {
+                    Ok(n) => n,
+                    Err(_) => continue,
+                };
+                let version_str = match remote_entry.get("vers").and_then(|v| v.as_str()) {
+                    Some(v) => v,
+                    None => continue,
+                };
+                let version: semver::Version = match version_str.parse() {
+                    Ok(v) => v,
+                    Err(_) => continue,
+                };
+
+                let index_path = r.index_file_path_for(&name);
+                let mut local_index: Index = if index_path.exists() {
+                    Registry::parse_index_file(&index_path).unwrap_or_default()
+                } else {
+                    Default::default()
+                };
+
+                let has_entry = local_index.contains_key(&version);
+                if has_entry {
+                    let ipfs_cid_missing = local_index.get(&version).unwrap().ipfs_cid.is_none();
+                    let blossom_url_missing = local_index.get(&version).unwrap().blossom_url.is_none();
+                    if ipfs_cid_missing {
+                        if let Some(cid) = remote_entry.get("ipfs_cid").and_then(|v| v.as_str()) {
+                            let mut updated = local_index.get(&version).unwrap().clone();
+                            updated.ipfs_cid = Some(cid.to_string());
+                            local_index.insert(version.clone(), updated);
+                            merged += 1;
+                        }
+                    }
+                    if blossom_url_missing {
+                        if let Some(url) = remote_entry.get("blossom_url").and_then(|v| v.as_str()) {
+                            let mut updated = local_index.get(&version).unwrap().clone();
+                            updated.blossom_url = Some(url.to_string());
+                            local_index.insert(version.clone(), updated);
+                            merged += 1;
+                        }
+                    }
+                } else {
+                    if let Ok(entry) = serde_json::from_str::<index_entry::Root>(line) {
+                        local_index.insert(version.clone(), entry);
+                        added += 1;
+                    }
+                }
+
+                if let Some(parent) = index_path.parent() {
+                    std::fs::create_dir_all(parent).ok();
+                }
+                let lines_out: Vec<String> = local_index.values().map(|e| serde_json::to_string(e).unwrap()).collect();
+                std::fs::write(&index_path, lines_out.join("\n") + if !lines_out.is_empty() { "\n" } else { "" }).ok();
+            }
+        }
+
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+        println!("Git sync complete: {} added, {} merged", added, merged);
+        return Ok(());
+    }
+
     // 1. Init/reuse IPFS repo
     let repo_path = r.path.join(".ipfs-repo");
     if !repo_path.exists() {
@@ -1047,6 +1185,9 @@ fn do_sync_ipfs(_global: &Global, sync: SyncArgs) -> Result<(), Error> {
 #[cfg(feature = "ipfs")]
 #[derive(Debug, Snafu)]
 enum SyncError {
+    #[snafu(display("Could not clone git remote: {reason}"))]
+    GitClone { reason: String },
+
     #[snafu(display("Could not initialize kubo repo: {reason}"))]
     RepoInit { reason: String },
 
