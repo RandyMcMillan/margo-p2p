@@ -246,9 +246,10 @@ Phases 1–4 for the content-distribution and reachability concerns.
       protocol, the git requirement, and the threat model.
 - [ ] Verify the MSRV (`rust-version = "1.81.0"`) against the `p2p` feature.
       Every CI matrix entry except `nightly` is currently commented out.
-- [ ] Fix `margo --help`, which prints nothing. This is pre-existing on
-      `upstream/main`, not introduced by the P2P work, but it makes the CI
-      `--help` smoke test vacuous.
+- [x] Fix `margo --help`, which prints nothing. Enabled the `help` feature
+      in argh (was disabled by `default-features = false`) and added doc
+      comments to the `ServeArgs` structs. `margo --help` now prints full
+      usage.
 
 ---
 
