@@ -207,7 +207,7 @@ Phases 1–4 for the content-distribution and reachability concerns.
 - [x] Delete hand-rolled libp2p stack: removed `src/p2p.rs`, removed `p2p`
       feature, removed `libp2p`/`async-trait`/`base64` dependencies, removed
       `build-p2p`/`check-p2p` CI jobs. The `ipfs` feature is now the sole
-      P2P implementation.
+      P2P implementation. **Already complete.**
 - [x] Set `dl` to the gateway URL: `margo serve` now 302-redirects
       `/crates/{prefix}/{crate}/{version}.crate` to `/ipfs/<cid>` when the
       index entry has an `ipfs_cid` (via `kubo_node_add_crate_redirect`).
