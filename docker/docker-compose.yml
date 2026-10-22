@@ -54,7 +54,7 @@ services:
     ports:
       - "5173:80"
     volumes:
-      - ./web/dist:/usr/share/nginx/html:ro
+      - ../web/dist:/usr/share/nginx/html:ro
     depends_on:
       - margo
 
