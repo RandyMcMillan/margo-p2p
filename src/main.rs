@@ -76,6 +76,11 @@ struct InitArgs {
     #[argh(option)]
     swarm_key: Option<PathBuf>,
 
+    /// nostr private key (nsec or hex) to derive a swarm key from
+    #[cfg(feature = "ipfs")]
+    #[argh(option)]
+    swarm_key_nsec: Option<String>,
+
     #[argh(positional)]
     path: PathBuf,
 }
@@ -170,6 +175,11 @@ struct ServeArgs {
     /// path to a swarm.key file for private IPFS swarm (optional)
     #[argh(option)]
     swarm_key: Option<PathBuf>,
+
+    /// nostr private key (nsec or hex) to derive a swarm key from
+    #[cfg(feature = "ipfs")]
+    #[argh(option)]
+    swarm_key_nsec: Option<String>,
 }
 
 /// Yank a version of a crate from the registry
@@ -437,6 +447,22 @@ fn do_init(_global: &Global, init: InitArgs) -> Result<(), DoInitializeError> {
     // Store swarm key if provided (for private IPFS swarm)
     store_swarm_key_if_provided(init.swarm_key.as_ref(), &r.path);
 
+    // Derive swarm key from nostr nsec if provided
+    #[cfg(feature = "ipfs")]
+    if let Some(nsec) = &init.swarm_key_nsec {
+        match kubo_ffi::nostr_nsec_to_swarm_key(nsec) {
+            Ok(key) => {
+                let dest = r.path.join(".swarm-key");
+                std::fs::write(&dest, &key).ok();
+                println!(
+                    "Derived swarm key from nostr nsec, stored at {}",
+                    dest.display()
+                );
+            }
+            Err(e) => eprintln!("Warning: could not derive swarm key: {}", e),
+        }
+    }
+
     if r.config.html.enabled {
         let res = r.generate_html();
 
@@ -686,7 +712,19 @@ fn do_serve_ipfs(_global: &Global, serve: ServeArgs) -> Result<(), Error> {
     // 1. init repo (reuse .ipfs-repo if it exists from `margo add --ipfs`)
     let repo_path = r.path.join(".ipfs-repo");
     if !repo_path.exists() {
-        // Check for swarm key: from --swarm-key flag or .swarm-key file
+        // Check for swarm key: from --swarm-key flag, --swarm-key-nsec, or .swarm-key file
+        #[cfg(feature = "ipfs")]
+        if let Some(nsec) = &serve.swarm_key_nsec {
+            match kubo_ffi::nostr_nsec_to_swarm_key(nsec) {
+                Ok(key) => {
+                    let dest = r.path.join(".swarm-key");
+                    std::fs::write(&dest, &key).ok();
+                    println!("Derived swarm key from nostr nsec");
+                }
+                Err(e) => eprintln!("Warning: could not derive swarm key: {}", e),
+            }
+        }
+
         let swarm_key_path = serve.swarm_key.clone().or_else(|| {
             let p = r.path.join(".swarm-key");
             if p.exists() {
@@ -701,8 +739,15 @@ fn do_serve_ipfs(_global: &Global, serve: ServeArgs) -> Result<(), Error> {
                 std::fs::read_to_string(sk_path).map_err(|e| IpfsServeError::Init {
                     reason: e.to_string(),
                 })?;
-            let config = format!(r#"{{"Swarm":{{"Key":"{}"}}}}"#, key_content.trim());
-            kubo_ffi::init_repo_with_config(&repo_path.to_string_lossy(), &config)
+            let config = serde_json::json!({
+                "Swarm": {
+                    "Key": key_content.trim()
+                }
+            });
+            let config_str = serde_json::to_string(&config).map_err(|e| IpfsServeError::Init {
+                reason: e.to_string(),
+            })?;
+            kubo_ffi::init_repo_with_config(&repo_path.to_string_lossy(), &config_str)
                 .map_err(|e| IpfsServeError::Init { reason: e })?;
             println!(
                 "Private swarm mode: using swarm key from {}",
