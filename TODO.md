@@ -222,6 +222,9 @@ Phases 1–4 for the content-distribution and reachability concerns.
 - [x] Add a `p2p-integration` CI job: `build-ipfs` + `check-ipfs` jobs added
       to `.github/workflows/ci.yml` (installs Go, builds FFI, runs
       `cargo test --features ipfs -- --nocapture`).
+- [x] Two-node integration test: `ipfs_two_node_fetch` verifies Node A
+      publishes a crate, Node B connects and fetches by CID, bytes match,
+      cksum verified.
 - [x] Honor `auth_required`: `margo add --ipfs` now warns when `auth_required`
       is true (publishing to public IPFS bypasses auth). `margo serve` warns
       when binding to a non-localhost address with `auth_required` set.
