@@ -53,6 +53,34 @@ Your next step is to serve those files from
 `https://my-registry.example.com` instead, in whatever way you
 serve static files from whatever URL you've specified.
 
+### Browser-based IPFS node (optional)
+
+Margo includes a browser-based IPFS node (`web/`) built with [Helia](https://github.com/ipfs/helia).
+It embeds all repository files at build time and adds them to IPFS on load,
+so anyone can browse and fetch files via IPFS directly in their browser.
+
+```bash
+# Build the web app with the repo embedded
+cd web
+npm install
+REPO_ROOT=.. npm run build
+
+# Serve locally
+npm run preview
+# Open http://localhost:4173
+```
+
+Or use the convenience script:
+
+```bash
+./scripts/serve-web.sh              # dev mode with hot reload
+./scripts/serve-web.sh . 5174 preview  # production build + preview
+```
+
+The web app can also be deployed to GitHub Pages using the
+[RandyMcMillan/ipfs-gh-pages](https://github.com/RandyMcMillan/ipfs-gh-pages)
+action, which embeds all repository files automatically.
+
 ### Peer-to-peer distribution (optional)
 
 Margo can optionally publish crates to [IPFS][ipfs] and/or [Blossom][blossom]
