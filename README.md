@@ -104,6 +104,25 @@ relay, AutoTLS and Kubo's default bootstrap peers):
 margo serve --registry my-registry-directory --networked
 ```
 
+### Private swarm (authenticated registries)
+
+For registries with `auth_required: true`, use a private IPFS swarm to
+ensure only authorized peers can access crate content:
+
+```bash
+# Generate a swarm key
+ipfs swarm key gen > swarm.key
+
+# Initialize with the swarm key
+margo init my-registry-directory --base-url https://my-registry.example.com --swarm-key swarm.key
+
+# Serve with the swarm key
+margo serve --registry my-registry-directory --swarm-key swarm.key --networked
+```
+
+Only peers possessing the same `swarm.key` can connect and fetch crates.
+Combine with a reverse proxy (nginx/Caddy) for HTTP-level authentication.
+
 The `ipfs` feature depends on a vendored copy of the [Kubo][kubo] FFI
 (`kubo/ffi`), which requires a Go toolchain to build. To build without it:
 
