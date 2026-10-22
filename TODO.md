@@ -233,8 +233,11 @@ Phases 1–4 for the content-distribution and reachability concerns.
 - [x] Honor `auth_required`: `margo add --ipfs` now warns when `auth_required`
       is true (publishing to public IPFS bypasses auth). `margo serve` warns
       when binding to a non-localhost address with `auth_required` set.
-      Full enforcement via reverse proxy or private swarm (documented in
-      README).
+      Full enforcement via private IPFS swarm: `margo init --swarm-key <path>`
+      stores the swarm key; `margo serve --swarm-key <path>` configures the
+      Kubo node with `Swarm.Key` for transport-level isolation. Only peers
+      with the matching swarm key can connect. Reverse proxy (Option A)
+      remains an alternative for HTTP-level auth.
 
 ## Housekeeping
 
