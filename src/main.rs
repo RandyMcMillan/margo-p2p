@@ -202,6 +202,10 @@ struct ServeArgs {
     #[cfg(feature = "ipfs")]
     #[argh(option)]
     swarm_key_nsec: Option<String>,
+
+    /// bearer token for HTTP authentication (enables auth on the gateway)
+    #[argh(option)]
+    auth_token: Option<String>,
 }
 
 /// Yank a version of a crate from the registry
@@ -846,6 +850,15 @@ fn do_serve_ipfs(_global: &Global, serve: ServeArgs) -> Result<(), Error> {
     // 2. start node
     let node = Node::start(&repo_path.to_string_lossy(), true)
         .map_err(|e| IpfsServeError::NodeStart { reason: e })?;
+
+    // 2b. set auth token if provided
+    if let Some(token) = &serve.auth_token {
+        if !node.set_auth_token(token) {
+            eprintln!("Warning: failed to set auth token");
+        } else {
+            println!("Auth enabled: Bearer token required");
+        }
+    }
 
     // 3. register static registry dir BEFORE starting the gateway
     if !node.add_static("/", &r.path.to_string_lossy()) {
