@@ -1,4 +1,5 @@
 name: "Cargo Cache"
+description: "Cache Cargo home and target directories"
 
 inputs:
   key:

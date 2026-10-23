@@ -21,32 +21,15 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Checkout kubo (for FFI)
-        uses: actions/checkout@v4
+      - name: Build assets
+        uses: ./.github/actions/build-assets
         with:
-          repository: RandyMcMillan/kubo
-          ref: v0.43.1-ffi.4
-          path: kubo
+          rust-toolchain: "1.90"
 
-      - name: Install pnpm and node
-        uses: pnpm/setup@v2
+      - name: Setup Go
+        uses: ./.github/actions/setup-go
         with:
-          version: ^11
-          runtime: node@26
-          cache: true
-
-      - name: Install Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.26'
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: '1.90'
-
-      - name: Convert assets to Rust
-        run: cargo xtask assets
+          go-version: "1.26"
 
       - name: Build margo
         run: cargo build --features ipfs

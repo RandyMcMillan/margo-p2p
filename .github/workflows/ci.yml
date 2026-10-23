@@ -9,39 +9,24 @@ jobs:
     strategy:
       matrix:
         rust:
-          #- 1.91 # MSRV
-          #- stable
           - nightly
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
 
-      - name: Install pnpm and node
-        uses: pnpm/setup@v2
+      - name: Build assets
+        uses: ./.github/actions/build-assets
         with:
-          version: ^11
-          runtime: node@26
-          cache: true
+          rust-toolchain: ${{ matrix.rust }}
 
       - name: Format UI assets
-        run: pnpm fmt:check || echo "fix file fomatting" 
-
-      - name: Build UI assets
-        run: pnpm build
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ matrix.rust }} #nightly #stable
+        run: pnpm fmt:check || echo "fix file fomatting"
 
       - name: Cache Rust
         uses: ./.github/actions/cargo-cache
         with:
           key: assets
-
-      - name: Convert assets to Rust
-        run: cargo xtask assets
 
       - name: Upload assets
         uses: actions/upload-artifact@v7
@@ -56,8 +41,6 @@ jobs:
     strategy:
       matrix:
         rust:
-          #- 1.91 # MSRV
-          #- stable
           - nightly
 
     needs: assets
@@ -72,8 +55,8 @@ jobs:
           name: assets
           path: src/html
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@master
+      - name: Setup Rust
+        uses: ./.github/actions/setup-rust
         with:
           toolchain: ${{ matrix.rust }}
 
@@ -93,14 +76,12 @@ jobs:
 
   check:
     name: Check
-    runs-on: ubuntu-latest    
+    runs-on: ubuntu-latest
     strategy:
       matrix:
         rust:
-          #- 1.81 # MSRV
-          #- stable
           - nightly
-          
+
     needs: build
     steps:
       - name: Checkout code
@@ -112,8 +93,8 @@ jobs:
           name: assets
           path: src/html
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@master
+      - name: Setup Rust
+        uses: ./.github/actions/setup-rust
         with:
           toolchain: ${{ matrix.rust }}
           components: rustfmt, clippy
@@ -139,7 +120,7 @@ jobs:
         run: |
           MARGO_BINARY="$(pwd)/margo"
           chmod +x "${MARGO_BINARY}"
-          echo "MARGO_BINARY=${MARGO_BINARY}" >> $GITHUB_ENV
+          echo "MARGO_BINARY=${MARGO_BINARY}" >> "$GITHUB_ENV"
           echo "${MARGO_BINARY}"
           "${MARGO_BINARY}" --help
 
@@ -181,28 +162,20 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install pnpm and node
-        uses: pnpm/setup@v2
+      - name: Build assets
+        uses: ./.github/actions/build-assets
         with:
-          version: ^11
-          runtime: node@26
-          cache: true
+          rust-toolchain: "1.90"
 
-      - name: Install Go
-        uses: actions/setup-go@v5
+      - name: Setup Go
+        uses: ./.github/actions/setup-go
         with:
-          go-version: '1.26'
+          go-version: "1.26"
 
-      - name: Build UI assets
-        run: pnpm build
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@master
+      - name: Cache Rust
+        uses: ./.github/actions/cargo-cache
         with:
-          toolchain: '1.90'
-
-      - name: Convert assets to Rust
-        run: cargo xtask assets
+          key: build-ipfs
 
       - name: Build code (ipfs feature)
         run: cargo build --features ipfs
@@ -217,29 +190,16 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install pnpm and node
-        uses: pnpm/setup@v2
+      - name: Build assets
+        uses: ./.github/actions/build-assets
         with:
-          version: ^11
-          runtime: node@26
-          cache: true
+          rust-toolchain: "1.90"
+          rust-components: clippy
 
-      - name: Install Go
-        uses: actions/setup-go@v5
+      - name: Setup Go
+        uses: ./.github/actions/setup-go
         with:
-          go-version: '1.26'
-
-      - name: Build UI assets
-        run: pnpm build
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: '1.90'
-          components: clippy
-
-      - name: Convert assets to Rust
-        run: cargo xtask assets
+          go-version: "1.26"
 
       - name: Lint code (ipfs)
         run: cargo clippy --features ipfs --all-targets -- #-D warnings
@@ -267,11 +227,11 @@ jobs:
         run: |
           chmod +x ./margo
           MARGO="$(pwd)/margo"
-          echo "MARGO=${MARGO}" >> $GITHUB_ENV
+          echo "MARGO=${MARGO}" >> "$GITHUB_ENV"
           "${MARGO}" --help
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@master
+      - name: Setup Rust
+        uses: ./.github/actions/setup-rust
         with:
           toolchain: nightly
 
@@ -281,7 +241,6 @@ jobs:
       - name: Package gnostr
         run: |
           cd /tmp/gnostr
-          # Remove dev-only path dep that lacks a version field
           sed -i '/test_utils.*path/d' Cargo.toml
           cargo package --no-verify --allow-dirty
 

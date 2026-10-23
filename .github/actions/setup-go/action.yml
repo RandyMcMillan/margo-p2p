@@ -1,0 +1,14 @@
+name: "Setup Go"
+description: "Install a Go toolchain"
+inputs:
+  go-version:
+    description: "Go version"
+    required: false
+    default: "1.26"
+runs:
+  using: "composite"
+  steps:
+    - name: Install Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ inputs.go-version }}
