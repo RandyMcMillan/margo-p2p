@@ -26,12 +26,12 @@ open http://localhost:8080/index.html
 
 ## Services
 
-| Service | Port | Description |
-|---|---|---|
-| `margo` | 8080 | Margo registry HTTP + IPFS gateway |
-| `kubo` | 4001 (swarm), 5001 (API), 8081 (gateway) | IPFS Kubo node (optional, for P2P) |
-| `blossom` | 3000 | Blossom blob storage server (optional) |
-| `web` | 5173 | Browser-based IPFS node (Helia) |
+| Service   | Port                                     | Description                            |
+| --------- | ---------------------------------------- | -------------------------------------- |
+| `margo`   | 8080                                     | Margo registry HTTP + IPFS gateway     |
+| `kubo`    | 4001 (swarm), 5001 (API), 8081 (gateway) | IPFS Kubo node (optional, for P2P)     |
+| `blossom` | 3000                                     | Blossom blob storage server (optional) |
+| `web`     | 5173                                     | Browser-based IPFS node (Helia)        |
 
 ## Files
 
@@ -89,22 +89,22 @@ docker compose -f docker-compose.yml -f docker-compose.ipfs.yml up -d
 
 ## Environment variables
 
-| Variable | Default | Description |
-|---|---|---|
-| `MARGO_REGISTRY` | `/data/registry` | Registry directory |
-| `MARGO_BASE_URL` | `http://localhost:8080/` | Base URL for the registry |
-| `MARGO_PORT` | `8080` | Port for margo serve |
-| `MARGO_FEATURES` | `ipfs` | Cargo features to enable |
-| `SWARM_KEY` | (none) | Path to swarm.key for private swarm |
-| `BLOSSOM_URL` | (none) | Blossom server URL for uploads |
+| Variable         | Default                  | Description                         |
+| ---------------- | ------------------------ | ----------------------------------- |
+| `MARGO_REGISTRY` | `/data/registry`         | Registry directory                  |
+| `MARGO_BASE_URL` | `http://localhost:8080/` | Base URL for the registry           |
+| `MARGO_PORT`     | `8080`                   | Port for margo serve                |
+| `MARGO_FEATURES` | `ipfs`                   | Cargo features to enable            |
+| `SWARM_KEY`      | (none)                   | Path to swarm.key for private swarm |
+| `BLOSSOM_URL`    | (none)                   | Blossom server URL for uploads      |
 
 ## Volumes
 
-| Volume | Mount point | Description |
-|---|---|---|
-| `registry-data` | `/data/registry` | Registry files (persistent) |
-| `ipfs-data` | `/data/ipfs` | IPFS repo (persistent) |
-| `blossom-data` | `/data/blossom` | Blossom blob storage (persistent) |
+| Volume          | Mount point      | Description                       |
+| --------------- | ---------------- | --------------------------------- |
+| `registry-data` | `/data/registry` | Registry files (persistent)       |
+| `ipfs-data`     | `/data/ipfs`     | IPFS repo (persistent)            |
+| `blossom-data`  | `/data/blossom`  | Blossom blob storage (persistent) |
 
 ## Notes
 
